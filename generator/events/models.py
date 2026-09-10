@@ -14,6 +14,7 @@ class CanonicalEvent:
     event_type: str
     subject_entity_id: str
     occurred_at: datetime
+    target_entity_id: str | None = None
 
     def __post_init__(self) -> None:
         required_text = {
@@ -24,5 +25,7 @@ class CanonicalEvent:
         for field_name, value in required_text.items():
             if not value.strip():
                 raise ValueError(f"{field_name} must be non-empty")
+        if self.target_entity_id is not None and not self.target_entity_id.strip():
+            raise ValueError("target_entity_id must be non-empty when provided")
         if self.occurred_at.tzinfo is None or self.occurred_at.utcoffset() is None:
             raise ValueError("occurred_at must be timezone-aware")

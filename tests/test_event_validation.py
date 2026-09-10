@@ -19,3 +19,20 @@ def test_event_validation_reports_missing_subject_entity() -> None:
     )
 
     assert errors == ("event-001: missing subject account-002",)
+
+
+def test_event_validation_reports_missing_target_entity() -> None:
+    errors = validate_event_references(
+        entities=(CanonicalEntity("account-001", "account"),),
+        events=(
+            CanonicalEvent(
+                event_id="event-001",
+                event_type="transfer",
+                subject_entity_id="account-001",
+                occurred_at=datetime(2026, 1, 1, 9, 0, tzinfo=UTC),
+                target_entity_id="beneficiary-001",
+            ),
+        ),
+    )
+
+    assert errors == ("event-001: missing target beneficiary-001",)
