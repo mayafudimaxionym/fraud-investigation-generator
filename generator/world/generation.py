@@ -78,7 +78,7 @@ def build_minimal_world(
         signals.append(
             CanonicalSignal(
                 signal_id=signal_id,
-                signal_type="shared_device_rapid_login_transfer",
+                signal_type="shared_device_login_transfer",
                 supporting_entity_ids=tuple(account_ids) + (device_id,),
                 supporting_event_ids=tuple(event_ids),
             )
@@ -93,6 +93,68 @@ def build_minimal_world(
                 causal_signal_ids=(signal_id,),
             )
         )
+
+    lookalike_suffix = f"{world_seed:016x}"
+    lookalike_device_id = f"device-lookalike-{lookalike_suffix}"
+    lookalike_signal_id = f"signal-lookalike-{lookalike_suffix}"
+    lookalike_timestamp = base_timestamp + timedelta(
+        minutes=blueprint.campaign_count * 5 + 5
+    )
+    lookalike_account_ids: list[str] = []
+    lookalike_event_ids: list[str] = []
+
+    entities.append(CanonicalEntity(lookalike_device_id, "device"))
+    for account_index in range(2):
+        account_id = f"account-lookalike-{lookalike_suffix}-{account_index:03d}"
+        login_event_id = f"login-lookalike-{lookalike_suffix}-{account_index:03d}"
+        transfer_event_id = (
+            f"transfer-lookalike-{lookalike_suffix}-{account_index:03d}"
+        )
+        relationship_id = (
+            f"relationship-lookalike-{lookalike_suffix}-{account_index:03d}"
+        )
+        login_timestamp = lookalike_timestamp + timedelta(
+            seconds=account_index * login_spacing_seconds
+        )
+        transfer_delay_minutes = 8 + (world_seed >> (account_index * 8)) % 13
+        lookalike_account_ids.append(account_id)
+        lookalike_event_ids.extend((login_event_id, transfer_event_id))
+
+        entities.append(CanonicalEntity(account_id, "account"))
+        relationships.append(
+            CanonicalRelationship(
+                relationship_id=relationship_id,
+                source_entity_id=account_id,
+                target_entity_id=lookalike_device_id,
+                relationship_type="uses_device",
+            )
+        )
+        events.append(
+            CanonicalEvent(
+                event_id=login_event_id,
+                event_type="login",
+                subject_entity_id=account_id,
+                occurred_at=login_timestamp,
+            )
+        )
+        events.append(
+            CanonicalEvent(
+                event_id=transfer_event_id,
+                event_type="transfer",
+                subject_entity_id=account_id,
+                occurred_at=login_timestamp
+                + timedelta(minutes=transfer_delay_minutes),
+            )
+        )
+    signals.append(
+        CanonicalSignal(
+            signal_id=lookalike_signal_id,
+            signal_type="shared_device_login_transfer",
+            supporting_entity_ids=tuple(lookalike_account_ids)
+            + (lookalike_device_id,),
+            supporting_event_ids=tuple(lookalike_event_ids),
+        )
+    )
 
     return CanonicalWorld(
         entities=tuple(entities),

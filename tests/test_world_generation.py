@@ -49,13 +49,16 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
         entity.entity_id for entity in world.entities if entity.entity_type == "device"
     }
 
-    assert len(world.entities) == 6
-    assert len(world.relationships) == 4
-    assert len(world.events) == 8
-    assert len(world.signals) == 2
-    assert len(device_ids) == 2
+    assert len(world.entities) == 9
+    assert len(world.relationships) == 6
+    assert len(world.events) == 12
+    assert len(world.signals) == 3
+    assert len(device_ids) == 3
 
     campaign_device_ids: set[str] = set()
+    campaign_entity_ids: set[str] = set()
+    campaign_event_ids: set[str] = set()
+    campaign_signal_ids: set[str] = set()
     for campaign in world.campaigns:
         account_ids = {
             entity_id
@@ -86,12 +89,15 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
         ]
 
         campaign_device_ids.add(campaign_device_id)
+        campaign_entity_ids.update(campaign.fraudulent_entity_ids)
+        campaign_event_ids.update(campaign.fraudulent_event_ids)
+        campaign_signal_ids.update(campaign.causal_signal_ids)
         assert len(campaign.fraudulent_entity_ids) == 3
         assert len(campaign.fraudulent_event_ids) == 4
         assert len(campaign.causal_signal_ids) == 1
         assert len(account_ids) == 2
         assert len(relationships) == 2
-        assert signal.signal_type == "shared_device_rapid_login_transfer"
+        assert signal.signal_type == "shared_device_login_transfer"
         assert len(login_events) == 2
         assert len(transfer_events) == 2
         login_spacing = login_events[1].occurred_at - login_events[0].occurred_at
@@ -115,4 +121,67 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
                 seconds=30
             )
 
-    assert campaign_device_ids == device_ids
+    lookalike_entity_ids = set(entities_by_id) - campaign_entity_ids
+    lookalike_event_ids = {event.event_id for event in world.events} - campaign_event_ids
+    lookalike_signal_ids = set(signals_by_id) - campaign_signal_ids
+    lookalike_device_ids = {
+        entity_id
+        for entity_id in lookalike_entity_ids
+        if entities_by_id[entity_id].entity_type == "device"
+    }
+    lookalike_account_ids = {
+        entity_id
+        for entity_id in lookalike_entity_ids
+        if entities_by_id[entity_id].entity_type == "account"
+    }
+    lookalike_signal = signals_by_id[next(iter(lookalike_signal_ids))]
+    lookalike_events = [
+        event for event in world.events if event.event_id in lookalike_event_ids
+    ]
+    lookalike_logins = [
+        event for event in lookalike_events if event.event_type == "login"
+    ]
+    lookalike_transfers = [
+        event for event in lookalike_events if event.event_type == "transfer"
+    ]
+    lookalike_relationships = [
+        relationship
+        for relationship in world.relationships
+        if relationship.source_entity_id in lookalike_account_ids
+        and relationship.target_entity_id in lookalike_device_ids
+        and relationship.relationship_type == "uses_device"
+    ]
+
+    assert campaign_device_ids.isdisjoint(lookalike_device_ids)
+    assert len(lookalike_device_ids) == 1
+    assert len(lookalike_account_ids) == 2
+    assert len(lookalike_relationships) == 2
+    assert len(lookalike_signal_ids) == 1
+    assert lookalike_signal.signal_type == "shared_device_login_transfer"
+    assert set(lookalike_signal.supporting_entity_ids) == (
+        lookalike_account_ids | lookalike_device_ids
+    )
+    assert set(lookalike_signal.supporting_event_ids) == lookalike_event_ids
+    assert len(lookalike_logins) == 2
+    assert len(lookalike_transfers) == 2
+    lookalike_login_spacing = (
+        lookalike_logins[1].occurred_at - lookalike_logins[0].occurred_at
+    )
+    assert timedelta(seconds=1) <= lookalike_login_spacing <= timedelta(seconds=15)
+
+    for account_id in lookalike_account_ids:
+        login_event = next(
+            event
+            for event in lookalike_logins
+            if event.subject_entity_id == account_id
+        )
+        transfer_event = next(
+            event
+            for event in lookalike_transfers
+            if event.subject_entity_id == account_id
+        )
+        transfer_latency = transfer_event.occurred_at - login_event.occurred_at
+
+        assert validate_event_precedence(login_event, transfer_event) == ()
+        assert timedelta(minutes=8) <= transfer_latency <= timedelta(minutes=20)
+        assert transfer_latency > timedelta(seconds=30)
