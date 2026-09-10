@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 from generator.events.models import CanonicalEvent
@@ -12,6 +13,7 @@ from generator.world.entities import CanonicalEntity
 from generator.world.model import CanonicalWorld
 from generator.world.relationships import CanonicalRelationship
 from generator.world.signals import CanonicalSignal
+from generator.world.truth import GroundTruthManifest
 
 
 def build_minimal_world(
@@ -214,3 +216,40 @@ def build_minimal_world(
         signals=tuple(signals),
         campaigns=tuple(campaigns),
     )
+
+
+def build_ground_truth_manifest(
+    blueprint: CaseBlueprint, world: CanonicalWorld
+) -> GroundTruthManifest:
+    """Assemble private ground truth from canonical campaign membership."""
+    causal_signal_ids = _stable_unique(
+        campaign.causal_signal_ids for campaign in world.campaigns
+    )
+    return GroundTruthManifest(
+        campaign_ids=tuple(campaign.campaign_id for campaign in world.campaigns),
+        fraudulent_entity_ids=_stable_unique(
+            campaign.fraudulent_entity_ids for campaign in world.campaigns
+        ),
+        fraudulent_event_ids=_stable_unique(
+            campaign.fraudulent_event_ids for campaign in world.campaigns
+        ),
+        causal_signal_ids=causal_signal_ids,
+        red_herring_ids=tuple(
+            signal.signal_id
+            for signal in world.signals
+            if signal.signal_id not in causal_signal_ids
+        ),
+        correct_hypothesis=blueprint.correct_hypothesis,
+    )
+
+
+def _stable_unique(identifier_groups: Iterable[Iterable[str]]) -> tuple[str, ...]:
+    """Return identifiers in first-seen order without duplicates."""
+    seen: set[str] = set()
+    identifiers: list[str] = []
+    for group in identifier_groups:
+        for identifier in group:
+            if identifier not in seen:
+                seen.add(identifier)
+                identifiers.append(identifier)
+    return tuple(identifiers)
