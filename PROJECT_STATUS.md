@@ -6,7 +6,7 @@ Foundation and domain-contract stage. The project defines the Python-owned case 
 
 ## Completed
 
-- Git is initialized, linked to GitHub, and the current commits are pushed.
+- Git is initialized, linked to GitHub, and all work through `6191b5b` is pushed.
 - A minimal dependency-free Python project foundation exists.
 - Deterministic sub-seed derivation and reproducibility metadata are defined.
 - The canonical world includes entities, relationships, events, signals, private fraud campaigns, and the `CanonicalWorld` aggregate.
@@ -17,11 +17,11 @@ Foundation and domain-contract stage. The project defines the Python-owned case 
 
 ## Current uncommitted work
 
-Campaign-to-ground-truth membership alignment validation is uncommitted pending review and approval.
+The happy-path `validate_case()` integration test and this status update are uncommitted pending local-suite verification and review.
 
 ## Current blockers
 
-- Python is unavailable on this agent shell's `PATH`, so the pytest suite has not yet been executed.
+- Python is unavailable on this agent shell's `PATH`, so the suite cannot be executed here. The latest user-run local suite passed 44/44 before the pending happy-path test was added.
 - Git whitespace checks have passed for the implemented changes.
 
 ## Next approved step
