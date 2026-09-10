@@ -2,27 +2,28 @@
 
 ## Current stage
 
-Foundation and domain-contract stage. The project defines the Python-owned case model, information boundaries, and initial deterministic validation rules. It does not yet generate cases, invoke Ollama, or write investigation datasets.
+Foundation and initial deterministic world-generation stage. The project defines the Python-owned case model, information boundaries, deterministic validation rules, and a minimal in-memory canonical-world builder. It does not invoke Ollama or write investigation datasets.
 
 ## Completed
 
-- Git is initialized, linked to GitHub, and all work through `aff74d8` is pushed.
+- Git is initialized, linked to GitHub, and the current commits are pushed.
 - A minimal dependency-free Python project foundation exists.
 - Deterministic sub-seed derivation and reproducibility metadata are defined.
 - The canonical world includes entities, relationships, events, signals, private fraud campaigns, and the `CanonicalWorld` aggregate.
 - `GroundTruthManifest` is separate from `InvestigatorViewManifest`.
 - `ScenarioSpec` supports distinct competing hypotheses.
 - `CaseBlueprint` declares private Python-owned correct-hypothesis and campaign-count constraints before generation.
+- `build_minimal_world()` deterministically creates one valid entity/event/signal/campaign unit per declared campaign.
 - Deterministic validation covers relationship, event, signal, artifact, and campaign references; campaign-to-ground-truth membership alignment; event precedence; world-level reference consistency; ground-truth hypothesis alignment; ground-truth references; and investigator-view references.
 - Structured Python-to-model artifact contracts exist. Python validates language-only model responses, rejects model-assigned identity fields, and attaches approved language to Python-assigned artifact IDs and types.
 
 ## Current uncommitted work
 
-The private `CaseBlueprint` contract, its tests, and this status update are uncommitted pending local-suite verification and review.
+No uncommitted implementation work.
 
 ## Current blockers
 
-- Python is unavailable on this agent shell's `PATH`, so the suite cannot be executed here. The latest user-run local suite passed 45/45 before the pending blueprint tests were added.
+- Python is unavailable on this agent shell's `PATH`, so the suite cannot be executed here. The latest user-run local suite passed 50/50.
 - Git whitespace checks have passed for the implemented changes.
 
 ## Next approved step
