@@ -9,15 +9,15 @@ Foundation and domain-contract stage. The project defines the Python-owned case 
 - Git is initialized, linked to GitHub, and the current commits are pushed.
 - A minimal dependency-free Python project foundation exists.
 - Deterministic sub-seed derivation and reproducibility metadata are defined.
-- The canonical world includes entities, relationships, events, signals, and the `CanonicalWorld` aggregate.
+- The canonical world includes entities, relationships, events, signals, private fraud campaigns, and the `CanonicalWorld` aggregate.
 - `GroundTruthManifest` is separate from `InvestigatorViewManifest`.
 - `ScenarioSpec` supports distinct competing hypotheses.
-- Deterministic validation covers relationship, event, signal, and artifact references; event precedence; world-level reference consistency; ground-truth hypothesis alignment; ground-truth references; and investigator-view references.
+- Deterministic validation covers relationship, event, signal, artifact, and campaign references; event precedence; world-level reference consistency; ground-truth hypothesis alignment; ground-truth references; and investigator-view references.
 - Structured Python-to-model artifact contracts exist. Python validates language-only model responses, rejects model-assigned identity fields, and attaches approved language to Python-assigned artifact IDs and types.
 
 ## Current uncommitted work
 
-There is no uncommitted implementation work. This documentation update is intentionally uncommitted pending review and approval.
+The private `FraudCampaign` contract, its world membership, campaign-reference validation, and ground-truth campaign resolution are uncommitted pending review and approval.
 
 ## Current blockers
 

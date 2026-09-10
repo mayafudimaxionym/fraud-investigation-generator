@@ -1,6 +1,8 @@
 from generator.scenario.spec import ScenarioSpec
 from generator.validation.ground_truth import validate_ground_truth_hypothesis
 from generator.validation.ground_truth import validate_ground_truth_references
+from generator.world.campaigns import FraudCampaign
+from generator.world.entities import CanonicalEntity
 from generator.world.model import CanonicalWorld
 from generator.world.truth import GroundTruthManifest
 
@@ -15,7 +17,7 @@ def test_ground_truth_validation_rejects_undeclared_hypothesis() -> None:
         required_artifacts=("client email",),
     )
     ground_truth = GroundTruthManifest(
-        campaign_ids=("campaign-001",),
+        campaign_ids=(),
         fraudulent_entity_ids=("account-001",),
         fraudulent_event_ids=("event-001",),
         causal_signal_ids=("signal-001",),
@@ -39,5 +41,35 @@ def test_ground_truth_validation_reports_missing_fraudulent_event() -> None:
     )
 
     assert validate_ground_truth_references(
-        CanonicalWorld(entities=(), relationships=(), events=()), ground_truth
+        CanonicalWorld(
+            entities=(CanonicalEntity("account-001", "account"),),
+            relationships=(),
+            events=(),
+            campaigns=(
+                FraudCampaign(
+                    campaign_id="campaign-001",
+                    mechanism="account takeover",
+                    actor_entity_ids=(),
+                    fraudulent_entity_ids=("account-001",),
+                    fraudulent_event_ids=(),
+                    causal_signal_ids=(),
+                ),
+            ),
+        ),
+        ground_truth,
     ) == ("ground_truth: missing fraudulent event event-001",)
+
+
+def test_ground_truth_validation_reports_missing_campaign() -> None:
+    ground_truth = GroundTruthManifest(
+        campaign_ids=("campaign-001",),
+        fraudulent_entity_ids=(),
+        fraudulent_event_ids=(),
+        causal_signal_ids=(),
+        red_herring_ids=(),
+        correct_hypothesis="account takeover",
+    )
+
+    assert validate_ground_truth_references(
+        CanonicalWorld(entities=(), relationships=(), events=()), ground_truth
+    ) == ("ground_truth: missing campaign campaign-001",)

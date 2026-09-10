@@ -25,8 +25,20 @@ def validate_ground_truth_references(
     entity_ids = {entity.entity_id for entity in world.entities}
     event_ids = {event.event_id for event in world.events}
     signal_ids = {signal.signal_id for signal in world.signals}
+    campaigns_by_id = {campaign.campaign_id: campaign for campaign in world.campaigns}
     errors: list[str] = []
 
+    for campaign_id in ground_truth.campaign_ids:
+        campaign = campaigns_by_id.get(campaign_id)
+        if campaign is None:
+            errors.append(f"ground_truth: missing campaign {campaign_id}")
+            continue
+        for signal_id in campaign.causal_signal_ids:
+            if signal_id not in ground_truth.causal_signal_ids:
+                errors.append(
+                    f"ground_truth: campaign {campaign_id} causal signal "
+                    f"{signal_id} is not declared"
+                )
     for entity_id in ground_truth.fraudulent_entity_ids:
         if entity_id not in entity_ids:
             errors.append(f"ground_truth: missing fraudulent entity {entity_id}")

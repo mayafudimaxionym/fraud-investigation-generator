@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from generator.events.models import CanonicalEvent
+from generator.world.campaigns import FraudCampaign
 from generator.world.entities import CanonicalEntity
 from generator.world.relationships import CanonicalRelationship
 from generator.world.signals import CanonicalSignal
@@ -18,6 +19,7 @@ class CanonicalWorld:
     relationships: tuple[CanonicalRelationship, ...]
     events: tuple[CanonicalEvent, ...]
     signals: tuple[CanonicalSignal, ...] = ()
+    campaigns: tuple[FraudCampaign, ...] = ()
 
     def __post_init__(self) -> None:
         collections = {
@@ -27,6 +29,7 @@ class CanonicalWorld:
             ),
             "events": tuple(event.event_id for event in self.events),
             "signals": tuple(signal.signal_id for signal in self.signals),
+            "campaigns": tuple(campaign.campaign_id for campaign in self.campaigns),
         }
         for collection_name, identifiers in collections.items():
             if len(identifiers) != len(set(identifiers)):

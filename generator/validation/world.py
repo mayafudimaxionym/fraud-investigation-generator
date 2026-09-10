@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from generator.validation.campaigns import validate_campaign_references
 from generator.validation.events import validate_event_references
 from generator.validation.relationships import validate_relationship_references
 from generator.validation.signals import validate_signal_references
@@ -17,4 +18,5 @@ def validate_world_references(world: CanonicalWorld) -> tuple[str, ...]:
     signal_errors = validate_signal_references(
         world.entities, world.events, world.signals
     )
-    return relationship_errors + event_errors + signal_errors
+    campaign_errors = validate_campaign_references(world)
+    return relationship_errors + event_errors + signal_errors + campaign_errors
