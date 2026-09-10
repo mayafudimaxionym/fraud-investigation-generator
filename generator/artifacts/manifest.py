@@ -12,12 +12,14 @@ class InvestigatorViewManifest:
     visible_entity_ids: tuple[str, ...]
     visible_event_ids: tuple[str, ...]
     artifact_ids: tuple[str, ...]
+    visible_relationship_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         identifier_groups = {
             "visible_entity_ids": self.visible_entity_ids,
             "visible_event_ids": self.visible_event_ids,
             "artifact_ids": self.artifact_ids,
+            "visible_relationship_ids": self.visible_relationship_ids,
         }
         for field_name, identifiers in identifier_groups.items():
             if len(identifiers) != len(set(identifiers)):

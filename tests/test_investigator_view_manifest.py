@@ -12,3 +12,17 @@ def test_investigator_view_rejects_duplicate_artifact_ids() -> None:
         assert "artifact_ids" in str(error)
     else:
         raise AssertionError("duplicate visible artifact identifiers must be rejected")
+
+
+def test_investigator_view_rejects_duplicate_visible_relationship_ids() -> None:
+    try:
+        InvestigatorViewManifest(
+            visible_entity_ids=(),
+            visible_event_ids=(),
+            artifact_ids=(),
+            visible_relationship_ids=("relationship-001", "relationship-001"),
+        )
+    except ValueError as error:
+        assert "visible_relationship_ids" in str(error)
+    else:
+        raise AssertionError("duplicate visible relationship IDs must be rejected")

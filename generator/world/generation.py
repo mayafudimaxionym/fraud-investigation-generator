@@ -37,8 +37,8 @@ def build_minimal_world(
         signal_id = f"signal-{suffix}"
         beneficiary_signal_id = f"signal-beneficiary-{suffix}"
         campaign_id = f"campaign-{suffix}"
-        device_id = f"device-{suffix}"
-        beneficiary_id = f"beneficiary-{suffix}"
+        device_id = _opaque_identifier("entity", world_seed, len(entities))
+        beneficiary_id = _opaque_identifier("entity", world_seed, len(entities) + 1)
         account_ids: list[str] = []
         event_ids: list[str] = []
         transfer_event_ids: list[str] = []
@@ -47,12 +47,14 @@ def build_minimal_world(
         entities.append(CanonicalEntity(device_id, "device"))
         entities.append(CanonicalEntity(beneficiary_id, "beneficiary"))
         for account_index in range(2):
-            account_id = f"account-{suffix}-{account_index:03d}"
-            login_event_id = f"login-{suffix}-{account_index:03d}"
-            transfer_event_id = f"transfer-{suffix}-{account_index:03d}"
-            relationship_id = f"relationship-{suffix}-{account_index:03d}"
-            beneficiary_relationship_id = (
-                f"relationship-beneficiary-{suffix}-{account_index:03d}"
+            account_id = _opaque_identifier("entity", world_seed, len(entities))
+            login_event_id = _opaque_identifier("event", world_seed, len(events))
+            transfer_event_id = _opaque_identifier("event", world_seed, len(events) + 1)
+            relationship_id = _opaque_identifier(
+                "relationship", world_seed, len(relationships)
+            )
+            beneficiary_relationship_id = _opaque_identifier(
+                "relationship", world_seed, len(relationships) + 1
             )
             login_timestamp = campaign_timestamp + timedelta(
                 seconds=account_index * login_spacing_seconds
@@ -128,7 +130,7 @@ def build_minimal_world(
         )
 
     lookalike_suffix = f"{world_seed:016x}"
-    lookalike_device_id = f"device-lookalike-{lookalike_suffix}"
+    lookalike_device_id = _opaque_identifier("entity", world_seed, len(entities))
     lookalike_signal_id = f"signal-lookalike-{lookalike_suffix}"
     lookalike_timestamp = base_timestamp + timedelta(
         minutes=blueprint.campaign_count * 5 + 5
@@ -138,19 +140,15 @@ def build_minimal_world(
 
     entities.append(CanonicalEntity(lookalike_device_id, "device"))
     for account_index in range(2):
-        account_id = f"account-lookalike-{lookalike_suffix}-{account_index:03d}"
-        login_event_id = f"login-lookalike-{lookalike_suffix}-{account_index:03d}"
-        transfer_event_id = (
-            f"transfer-lookalike-{lookalike_suffix}-{account_index:03d}"
+        account_id = _opaque_identifier("entity", world_seed, len(entities))
+        login_event_id = _opaque_identifier("event", world_seed, len(events))
+        transfer_event_id = _opaque_identifier("event", world_seed, len(events) + 1)
+        relationship_id = _opaque_identifier(
+            "relationship", world_seed, len(relationships)
         )
-        relationship_id = (
-            f"relationship-lookalike-{lookalike_suffix}-{account_index:03d}"
-        )
-        beneficiary_id = (
-            f"beneficiary-lookalike-{lookalike_suffix}-{account_index:03d}"
-        )
-        beneficiary_relationship_id = (
-            f"relationship-beneficiary-lookalike-{lookalike_suffix}-{account_index:03d}"
+        beneficiary_id = _opaque_identifier("entity", world_seed, len(entities) + 1)
+        beneficiary_relationship_id = _opaque_identifier(
+            "relationship", world_seed, len(relationships) + 1
         )
         login_timestamp = lookalike_timestamp + timedelta(
             seconds=account_index * login_spacing_seconds
@@ -253,3 +251,8 @@ def _stable_unique(identifier_groups: Iterable[Iterable[str]]) -> tuple[str, ...
                 seen.add(identifier)
                 identifiers.append(identifier)
     return tuple(identifiers)
+
+
+def _opaque_identifier(prefix: str, world_seed: int, index: int) -> str:
+    """Build a deterministic identifier without interpretive role labels."""
+    return f"{prefix}-{world_seed:016x}-{index:03d}"

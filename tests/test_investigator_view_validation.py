@@ -19,3 +19,14 @@ def test_investigator_view_validation_reports_missing_artifact() -> None:
     )
 
     assert errors == ("investigator_view: missing artifact email-001",)
+
+
+def test_investigator_view_validation_reports_missing_visible_relationship() -> None:
+    errors = validate_investigator_view_references(
+        CanonicalWorld(entities=(), relationships=(), events=()),
+        InvestigatorViewManifest((), (), (), ("relationship-001",)),
+    )
+
+    assert errors == (
+        "investigator_view: missing visible relationship relationship-001",
+    )

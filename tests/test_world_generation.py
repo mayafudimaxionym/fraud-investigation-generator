@@ -41,6 +41,31 @@ def test_minimal_world_generation_varies_with_seed() -> None:
     assert build_minimal_world(blueprint, 427) != build_minimal_world(blueprint, 428)
 
 
+def test_generated_record_ids_are_opaque_to_private_interpretation() -> None:
+    world = build_minimal_world(_blueprint(), 427)
+    private_labels = (
+        "fraud",
+        "lookalike",
+        "benign",
+        "red_herring",
+        "causal",
+        "hypothesis",
+        "campaign",
+    )
+
+    for prefix, identifiers in (
+        ("entity-", (entity.entity_id for entity in world.entities)),
+        ("event-", (event.event_id for event in world.events)),
+        (
+            "relationship-",
+            (relationship.relationship_id for relationship in world.relationships),
+        ),
+    ):
+        for identifier in identifiers:
+            assert identifier.startswith(prefix)
+            assert not any(label in identifier for label in private_labels)
+
+
 def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> None:
     world = build_minimal_world(_blueprint(campaign_count=2), 427)
     entities_by_id = {entity.entity_id: entity for entity in world.entities}
