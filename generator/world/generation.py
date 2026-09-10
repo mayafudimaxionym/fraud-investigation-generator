@@ -27,6 +27,7 @@ def build_minimal_world(
     events: list[CanonicalEvent] = []
     signals: list[CanonicalSignal] = []
     campaigns: list[FraudCampaign] = []
+    login_spacing_seconds = 1 + world_seed % 15
 
     for campaign_index in range(blueprint.campaign_count):
         suffix = f"{world_seed:016x}-{campaign_index:03d}"
@@ -35,14 +36,19 @@ def build_minimal_world(
         device_id = f"device-{suffix}"
         account_ids: list[str] = []
         event_ids: list[str] = []
+        campaign_timestamp = base_timestamp + timedelta(minutes=campaign_index * 5)
 
         entities.append(CanonicalEntity(device_id, "device"))
         for account_index in range(2):
             account_id = f"account-{suffix}-{account_index:03d}"
-            event_id = f"event-{suffix}-{account_index:03d}"
+            login_event_id = f"login-{suffix}-{account_index:03d}"
+            transfer_event_id = f"transfer-{suffix}-{account_index:03d}"
             relationship_id = f"relationship-{suffix}-{account_index:03d}"
+            login_timestamp = campaign_timestamp + timedelta(
+                seconds=account_index * login_spacing_seconds
+            )
             account_ids.append(account_id)
-            event_ids.append(event_id)
+            event_ids.extend((login_event_id, transfer_event_id))
 
             entities.append(CanonicalEntity(account_id, "account"))
             relationships.append(
@@ -55,17 +61,24 @@ def build_minimal_world(
             )
             events.append(
                 CanonicalEvent(
-                    event_id=event_id,
+                    event_id=login_event_id,
+                    event_type="login",
+                    subject_entity_id=account_id,
+                    occurred_at=login_timestamp,
+                )
+            )
+            events.append(
+                CanonicalEvent(
+                    event_id=transfer_event_id,
                     event_type="transfer",
                     subject_entity_id=account_id,
-                    occurred_at=base_timestamp
-                    + timedelta(seconds=campaign_index * 2 + account_index),
+                    occurred_at=login_timestamp + timedelta(seconds=30),
                 )
             )
         signals.append(
             CanonicalSignal(
                 signal_id=signal_id,
-                signal_type="shared_device",
+                signal_type="shared_device_rapid_login_transfer",
                 supporting_entity_ids=tuple(account_ids) + (device_id,),
                 supporting_event_ids=tuple(event_ids),
             )

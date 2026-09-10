@@ -13,7 +13,7 @@ Foundation and initial deterministic world-generation stage. The project defines
 - `GroundTruthManifest` is separate from `InvestigatorViewManifest`.
 - `ScenarioSpec` supports distinct competing hypotheses.
 - `CaseBlueprint` declares private Python-owned correct-hypothesis and campaign-count constraints before generation.
-- `build_minimal_world()` deterministically creates two accounts, one campaign-local shared device, two events, two relationships, and one shared-device signal per declared campaign.
+- `build_minimal_world()` deterministically creates two accounts, one campaign-local shared device, login-to-transfer event sequences, two relationships, and one composite shared-device temporal signal per declared campaign.
 - Deterministic validation covers relationship, event, signal, artifact, and campaign references; campaign-to-ground-truth membership alignment; event precedence; world-level reference consistency; ground-truth hypothesis alignment; ground-truth references; and investigator-view references.
 - Structured Python-to-model artifact contracts exist. Python validates language-only model responses, rejects model-assigned identity fields, and attaches approved language to Python-assigned artifact IDs and types.
 

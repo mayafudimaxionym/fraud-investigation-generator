@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 from generator.scenario.blueprint import CaseBlueprint
 from generator.scenario.spec import ScenarioSpec
+from generator.validation.temporal import validate_event_precedence
 from generator.validation.world import validate_world_references
 from generator.world.generation import build_minimal_world
 
@@ -48,7 +51,7 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
 
     assert len(world.entities) == 6
     assert len(world.relationships) == 4
-    assert len(world.events) == 4
+    assert len(world.events) == 8
     assert len(world.signals) == 2
     assert len(device_ids) == 2
 
@@ -65,6 +68,15 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
             if entities_by_id[entity_id].entity_type == "device"
         )
         signal = signals_by_id[campaign.causal_signal_ids[0]]
+        campaign_events = [
+            event
+            for event in world.events
+            if event.event_id in campaign.fraudulent_event_ids
+        ]
+        login_events = [event for event in campaign_events if event.event_type == "login"]
+        transfer_events = [
+            event for event in campaign_events if event.event_type == "transfer"
+        ]
         relationships = [
             relationship
             for relationship in world.relationships
@@ -75,11 +87,32 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
 
         campaign_device_ids.add(campaign_device_id)
         assert len(campaign.fraudulent_entity_ids) == 3
-        assert len(campaign.fraudulent_event_ids) == 2
+        assert len(campaign.fraudulent_event_ids) == 4
         assert len(campaign.causal_signal_ids) == 1
         assert len(account_ids) == 2
         assert len(relationships) == 2
+        assert signal.signal_type == "shared_device_rapid_login_transfer"
+        assert len(login_events) == 2
+        assert len(transfer_events) == 2
+        login_spacing = login_events[1].occurred_at - login_events[0].occurred_at
+        assert timedelta(seconds=1) <= login_spacing <= timedelta(seconds=15)
         assert set(signal.supporting_entity_ids) == account_ids | {campaign_device_id}
         assert set(signal.supporting_event_ids) == set(campaign.fraudulent_event_ids)
+
+        for account_id in account_ids:
+            login_event = next(
+                event
+                for event in login_events
+                if event.subject_entity_id == account_id
+            )
+            transfer_event = next(
+                event
+                for event in transfer_events
+                if event.subject_entity_id == account_id
+            )
+            assert validate_event_precedence(login_event, transfer_event) == ()
+            assert transfer_event.occurred_at - login_event.occurred_at == timedelta(
+                seconds=30
+            )
 
     assert campaign_device_ids == device_ids
