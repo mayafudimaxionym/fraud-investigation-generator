@@ -28,6 +28,7 @@ def build_minimal_world(
     signals: list[CanonicalSignal] = []
     campaigns: list[FraudCampaign] = []
     login_spacing_seconds = 1 + world_seed % 15
+    shared_slow_transfer_delay_minutes = 8 + (world_seed >> 8) % 13
 
     for campaign_index in range(blueprint.campaign_count):
         suffix = f"{world_seed:016x}-{campaign_index:03d}"
@@ -72,7 +73,12 @@ def build_minimal_world(
                     event_id=transfer_event_id,
                     event_type="transfer",
                     subject_entity_id=account_id,
-                    occurred_at=login_timestamp + timedelta(seconds=30),
+                    occurred_at=login_timestamp
+                    + timedelta(
+                        seconds=30
+                        if account_index == 0
+                        else shared_slow_transfer_delay_minutes * 60
+                    ),
                 )
             )
         signals.append(
@@ -116,7 +122,11 @@ def build_minimal_world(
         login_timestamp = lookalike_timestamp + timedelta(
             seconds=account_index * login_spacing_seconds
         )
-        transfer_delay_minutes = 8 + (world_seed >> (account_index * 8)) % 13
+        transfer_delay_minutes = (
+            8 + world_seed % 13
+            if account_index == 0
+            else shared_slow_transfer_delay_minutes
+        )
         lookalike_account_ids.append(account_id)
         lookalike_event_ids.extend((login_event_id, transfer_event_id))
 

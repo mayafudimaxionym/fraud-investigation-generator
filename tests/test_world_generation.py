@@ -59,6 +59,7 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
     campaign_entity_ids: set[str] = set()
     campaign_event_ids: set[str] = set()
     campaign_signal_ids: set[str] = set()
+    fraud_transfer_latencies: list[timedelta] = []
     for campaign in world.campaigns:
         account_ids = {
             entity_id
@@ -117,9 +118,15 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
                 if event.subject_entity_id == account_id
             )
             assert validate_event_precedence(login_event, transfer_event) == ()
-            assert transfer_event.occurred_at - login_event.occurred_at == timedelta(
-                seconds=30
+            fraud_transfer_latencies.append(
+                transfer_event.occurred_at - login_event.occurred_at
             )
+
+    assert fraud_transfer_latencies.count(timedelta(seconds=30)) == len(world.campaigns)
+    assert sum(
+        timedelta(minutes=8) <= latency <= timedelta(minutes=20)
+        for latency in fraud_transfer_latencies
+    ) == len(world.campaigns)
 
     lookalike_entity_ids = set(entities_by_id) - campaign_entity_ids
     lookalike_event_ids = {event.event_id for event in world.events} - campaign_event_ids
@@ -169,6 +176,7 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
     )
     assert timedelta(seconds=1) <= lookalike_login_spacing <= timedelta(seconds=15)
 
+    lookalike_transfer_latencies: list[timedelta] = []
     for account_id in lookalike_account_ids:
         login_event = next(
             event
@@ -185,3 +193,6 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
         assert validate_event_precedence(login_event, transfer_event) == ()
         assert timedelta(minutes=8) <= transfer_latency <= timedelta(minutes=20)
         assert transfer_latency > timedelta(seconds=30)
+        lookalike_transfer_latencies.append(transfer_latency)
+
+    assert set(fraud_transfer_latencies) & set(lookalike_transfer_latencies)
