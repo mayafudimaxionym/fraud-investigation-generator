@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -62,3 +63,15 @@ class ArtifactGenerationResponse:
     def to_dict(self) -> dict[str, str]:
         """Return the model response payload for Python-side validation."""
         return {"content": self.content}
+
+
+def parse_artifact_generation_response(
+    payload: Mapping[str, object],
+) -> ArtifactGenerationResponse:
+    """Validate a model payload that is restricted to generated language."""
+    if set(payload) != {"content"}:
+        raise ValueError("artifact response must contain only content")
+    content = payload["content"]
+    if not isinstance(content, str):
+        raise ValueError("artifact response content must be a string")
+    return ArtifactGenerationResponse(content=content)

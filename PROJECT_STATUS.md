@@ -12,8 +12,8 @@ Foundation and domain-contract stage. The project defines the Python-owned case 
 - The canonical world includes entities, relationships, events, signals, and the `CanonicalWorld` aggregate.
 - `GroundTruthManifest` is separate from `InvestigatorViewManifest`.
 - `ScenarioSpec` supports distinct competing hypotheses.
-- Deterministic validation covers relationship, event, and signal references; event precedence; world-level reference consistency; ground-truth hypothesis alignment; ground-truth references; and investigator-view references.
-- Structured Python-to-model artifact contracts exist. `ArtifactGenerationResponse` permits only generated language; model output cannot assign canonical IDs or facts.
+- Deterministic validation covers relationship, event, signal, and artifact references; event precedence; world-level reference consistency; ground-truth hypothesis alignment; ground-truth references; and investigator-view references.
+- Structured Python-to-model artifact contracts exist. Python validates language-only model responses, rejects model-assigned identity fields, and attaches approved language to Python-assigned artifact IDs and types.
 
 ## Current uncommitted work
 
@@ -26,7 +26,7 @@ There is no uncommitted implementation work. This documentation update is intent
 
 ## Next approved step
 
-No next implementation step is currently approved.
+Continue through closely related, low-risk implementation steps. Stop for approval before architectural decisions, new dependencies, Ollama integration, persistence or file-format choices, dataset generation, or substantial scope changes.
 
 ## Architectural constraints
 

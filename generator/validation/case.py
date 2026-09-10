@@ -21,7 +21,7 @@ def validate_case(case: CanonicalCase) -> tuple[str, ...]:
         case.world, case.ground_truth
     )
     investigator_view_errors = validate_investigator_view_references(
-        case.world, case.investigator_view
+        case.world, case.investigator_view, case.artifacts
     )
     return (
         world_errors

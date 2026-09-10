@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from generator.artifacts.manifest import InvestigatorViewManifest
+from generator.artifacts.models import InvestigatorArtifact
 from generator.world.model import CanonicalWorld
 
 
 def validate_investigator_view_references(
-    world: CanonicalWorld, investigator_view: InvestigatorViewManifest
+    world: CanonicalWorld,
+    investigator_view: InvestigatorViewManifest,
+    artifacts: Iterable[InvestigatorArtifact] = (),
 ) -> tuple[str, ...]:
     """Return errors for visible world references absent from the canonical world."""
     entity_ids = {entity.entity_id for entity in world.entities}
     event_ids = {event.event_id for event in world.events}
+    artifact_ids = {artifact.artifact_id for artifact in artifacts}
     errors: list[str] = []
 
     for entity_id in investigator_view.visible_entity_ids:
@@ -20,5 +26,8 @@ def validate_investigator_view_references(
     for event_id in investigator_view.visible_event_ids:
         if event_id not in event_ids:
             errors.append(f"investigator_view: missing visible event {event_id}")
+    for artifact_id in investigator_view.artifact_ids:
+        if artifact_id not in artifact_ids:
+            errors.append(f"investigator_view: missing artifact {artifact_id}")
 
     return tuple(errors)

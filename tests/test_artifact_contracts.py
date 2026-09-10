@@ -2,6 +2,7 @@ from generator.artifacts.contracts import (
     ArtifactFact,
     ArtifactGenerationRequest,
     ArtifactGenerationResponse,
+    parse_artifact_generation_response,
 )
 
 
@@ -44,3 +45,22 @@ def test_artifact_request_serializes_to_json_compatible_payload() -> None:
         "canonical_facts": [{"key": "account_id", "value": "account-001"}],
         "ambiguity_instructions": ["Use an incomplete recollection."],
     }
+
+
+def test_artifact_response_parser_rejects_model_assigned_identity() -> None:
+    try:
+        parse_artifact_generation_response(
+            {"artifact_id": "email-001", "content": "Please help."}
+        )
+    except ValueError as error:
+        assert "only content" in str(error)
+    else:
+        raise AssertionError("model responses must not assign artifact identities")
+
+
+def test_artifact_response_parser_accepts_language_only_payload() -> None:
+    response = parse_artifact_generation_response(
+        {"content": "Please help me understand this transfer."}
+    )
+
+    assert response.content == "Please help me understand this transfer."
