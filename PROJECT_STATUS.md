@@ -14,7 +14,7 @@ Foundation and initial deterministic world-generation stage. The project defines
 - `ScenarioSpec` supports distinct competing hypotheses.
 - `CaseBlueprint` declares private Python-owned correct-hypothesis and campaign-count constraints before generation.
 - `CanonicalEvent` can optionally reference a canonical target entity, with deterministic target-reference validation.
-- `build_minimal_world()` deterministically creates campaign-local shared-device fraud sequences with both rapid and seeded delayed transfers, plus one campaign-external shared-device lookalike with an intentionally overlapping seeded delay.
+- `build_minimal_world()` deterministically creates campaign-local shared-device fraud sequences with beneficiary convergence, plus a campaign-external shared-device lookalike with intentionally overlapping transfer timing and distinct beneficiaries.
 - Deterministic validation covers relationship, event, signal, artifact, and campaign references; campaign-to-ground-truth membership alignment; event precedence; world-level reference consistency; ground-truth hypothesis alignment; ground-truth references; and investigator-view references.
 - Structured Python-to-model artifact contracts exist. Python validates language-only model responses, rejects model-assigned identity fields, and attaches approved language to Python-assigned artifact IDs and types.
 

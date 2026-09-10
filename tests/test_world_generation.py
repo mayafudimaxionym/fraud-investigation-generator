@@ -49,16 +49,17 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
         entity.entity_id for entity in world.entities if entity.entity_type == "device"
     }
 
-    assert len(world.entities) == 9
-    assert len(world.relationships) == 6
+    assert len(world.entities) == 13
+    assert len(world.relationships) == 12
     assert len(world.events) == 12
-    assert len(world.signals) == 3
+    assert len(world.signals) == 5
     assert len(device_ids) == 3
 
     campaign_device_ids: set[str] = set()
     campaign_entity_ids: set[str] = set()
     campaign_event_ids: set[str] = set()
     campaign_signal_ids: set[str] = set()
+    campaign_beneficiary_ids: set[str] = set()
     fraud_transfer_latencies: list[timedelta] = []
     for campaign in world.campaigns:
         account_ids = {
@@ -71,7 +72,21 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
             for entity_id in campaign.fraudulent_entity_ids
             if entities_by_id[entity_id].entity_type == "device"
         )
-        signal = signals_by_id[campaign.causal_signal_ids[0]]
+        campaign_beneficiary_id = next(
+            entity_id
+            for entity_id in campaign.fraudulent_entity_ids
+            if entities_by_id[entity_id].entity_type == "beneficiary"
+        )
+        signal = next(
+            signals_by_id[signal_id]
+            for signal_id in campaign.causal_signal_ids
+            if signals_by_id[signal_id].signal_type == "shared_device_login_transfer"
+        )
+        beneficiary_signal = next(
+            signals_by_id[signal_id]
+            for signal_id in campaign.causal_signal_ids
+            if signals_by_id[signal_id].signal_type == "shared_beneficiary"
+        )
         campaign_events = [
             event
             for event in world.events
@@ -88,16 +103,25 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
             and relationship.target_entity_id == campaign_device_id
             and relationship.relationship_type == "uses_device"
         ]
+        beneficiary_relationships = [
+            relationship
+            for relationship in world.relationships
+            if relationship.source_entity_id in account_ids
+            and relationship.target_entity_id == campaign_beneficiary_id
+            and relationship.relationship_type == "transfers_to"
+        ]
 
         campaign_device_ids.add(campaign_device_id)
         campaign_entity_ids.update(campaign.fraudulent_entity_ids)
         campaign_event_ids.update(campaign.fraudulent_event_ids)
         campaign_signal_ids.update(campaign.causal_signal_ids)
-        assert len(campaign.fraudulent_entity_ids) == 3
+        campaign_beneficiary_ids.add(campaign_beneficiary_id)
+        assert len(campaign.fraudulent_entity_ids) == 4
         assert len(campaign.fraudulent_event_ids) == 4
-        assert len(campaign.causal_signal_ids) == 1
+        assert len(campaign.causal_signal_ids) == 2
         assert len(account_ids) == 2
         assert len(relationships) == 2
+        assert len(beneficiary_relationships) == 2
         assert signal.signal_type == "shared_device_login_transfer"
         assert len(login_events) == 2
         assert len(transfer_events) == 2
@@ -105,6 +129,12 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
         assert timedelta(seconds=1) <= login_spacing <= timedelta(seconds=15)
         assert set(signal.supporting_entity_ids) == account_ids | {campaign_device_id}
         assert set(signal.supporting_event_ids) == set(campaign.fraudulent_event_ids)
+        assert set(beneficiary_signal.supporting_entity_ids) == account_ids | {
+            campaign_beneficiary_id
+        }
+        assert set(beneficiary_signal.supporting_event_ids) == {
+            event.event_id for event in transfer_events
+        }
 
         for account_id in account_ids:
             login_event = next(
@@ -118,6 +148,7 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
                 if event.subject_entity_id == account_id
             )
             assert validate_event_precedence(login_event, transfer_event) == ()
+            assert transfer_event.target_entity_id == campaign_beneficiary_id
             fraud_transfer_latencies.append(
                 transfer_event.occurred_at - login_event.occurred_at
             )
@@ -127,6 +158,7 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
         timedelta(minutes=8) <= latency <= timedelta(minutes=20)
         for latency in fraud_transfer_latencies
     ) == len(world.campaigns)
+    assert len(campaign_beneficiary_ids) == len(world.campaigns)
 
     lookalike_entity_ids = set(entities_by_id) - campaign_entity_ids
     lookalike_event_ids = {event.event_id for event in world.events} - campaign_event_ids
@@ -140,6 +172,11 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
         entity_id
         for entity_id in lookalike_entity_ids
         if entities_by_id[entity_id].entity_type == "account"
+    }
+    lookalike_beneficiary_ids = {
+        entity_id
+        for entity_id in lookalike_entity_ids
+        if entities_by_id[entity_id].entity_type == "beneficiary"
     }
     lookalike_signal = signals_by_id[next(iter(lookalike_signal_ids))]
     lookalike_events = [
@@ -158,11 +195,21 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
         and relationship.target_entity_id in lookalike_device_ids
         and relationship.relationship_type == "uses_device"
     ]
+    lookalike_beneficiary_relationships = [
+        relationship
+        for relationship in world.relationships
+        if relationship.source_entity_id in lookalike_account_ids
+        and relationship.target_entity_id in lookalike_beneficiary_ids
+        and relationship.relationship_type == "transfers_to"
+    ]
 
     assert campaign_device_ids.isdisjoint(lookalike_device_ids)
     assert len(lookalike_device_ids) == 1
     assert len(lookalike_account_ids) == 2
+    assert len(lookalike_beneficiary_ids) == 2
     assert len(lookalike_relationships) == 2
+    assert len(lookalike_beneficiary_relationships) == 2
+    assert campaign_beneficiary_ids.isdisjoint(lookalike_beneficiary_ids)
     assert len(lookalike_signal_ids) == 1
     assert lookalike_signal.signal_type == "shared_device_login_transfer"
     assert set(lookalike_signal.supporting_entity_ids) == (
@@ -171,6 +218,9 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
     assert set(lookalike_signal.supporting_event_ids) == lookalike_event_ids
     assert len(lookalike_logins) == 2
     assert len(lookalike_transfers) == 2
+    assert {
+        event.target_entity_id for event in lookalike_transfers
+    } == lookalike_beneficiary_ids
     lookalike_login_spacing = (
         lookalike_logins[1].occurred_at - lookalike_logins[0].occurred_at
     )
@@ -191,6 +241,12 @@ def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> 
         transfer_latency = transfer_event.occurred_at - login_event.occurred_at
 
         assert validate_event_precedence(login_event, transfer_event) == ()
+        assert transfer_event.target_entity_id in lookalike_beneficiary_ids
+        assert sum(
+            relationship.source_entity_id == account_id
+            and relationship.target_entity_id == transfer_event.target_entity_id
+            for relationship in lookalike_beneficiary_relationships
+        ) == 1
         assert timedelta(minutes=8) <= transfer_latency <= timedelta(minutes=20)
         assert transfer_latency > timedelta(seconds=30)
         lookalike_transfer_latencies.append(transfer_latency)
