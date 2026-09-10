@@ -15,6 +15,7 @@ Foundation and initial deterministic world-generation stage. The project defines
 - `CaseBlueprint` declares private Python-owned correct-hypothesis and campaign-count constraints before generation.
 - `CanonicalEvent` can optionally reference a canonical target entity, with deterministic target-reference validation.
 - `InvestigatorViewManifest` supports optional visible relationship references with deterministic reference validation.
+- `build_investigator_view_manifest()` deterministically exposes all raw entity, relationship, and event references without campaign or signal adjudication.
 - `build_minimal_world()` deterministically creates campaign-local shared-device fraud sequences with beneficiary convergence, plus a campaign-external shared-device lookalike with intentionally overlapping transfer timing and distinct beneficiaries.
 - `build_ground_truth_manifest()` deterministically assembles campaign truth, causal signals, red herrings, and the approved hypothesis from a canonical world and blueprint.
 - Deterministic validation covers relationship, event, signal, artifact, and campaign references; campaign-to-ground-truth membership alignment; event precedence; world-level reference consistency; ground-truth hypothesis alignment; ground-truth references; and investigator-view references.
@@ -26,7 +27,7 @@ No uncommitted implementation work.
 
 ## Current blockers
 
-- Python is unavailable on this agent shell's `PATH`, so the suite cannot be executed here. The latest user-run local suite passed 58/58.
+- Python is unavailable on this agent shell's `PATH`, so the suite cannot be executed here. The latest user-run local suite passed 60/60.
 - Git whitespace checks have passed for the implemented changes.
 
 ## Next approved step

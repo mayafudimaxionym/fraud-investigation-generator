@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
+from generator.artifacts.manifest import InvestigatorViewManifest
 from generator.events.models import CanonicalEvent
 from generator.scenario.blueprint import CaseBlueprint
 from generator.seed import derive_seed
@@ -238,6 +239,20 @@ def build_ground_truth_manifest(
             if signal.signal_id not in causal_signal_ids
         ),
         correct_hypothesis=blueprint.correct_hypothesis,
+    )
+
+
+def build_investigator_view_manifest(
+    world: CanonicalWorld,
+) -> InvestigatorViewManifest:
+    """Expose all raw canonical-world evidence without fraud adjudication."""
+    return InvestigatorViewManifest(
+        visible_entity_ids=tuple(entity.entity_id for entity in world.entities),
+        visible_event_ids=tuple(event.event_id for event in world.events),
+        artifact_ids=(),
+        visible_relationship_ids=tuple(
+            relationship.relationship_id for relationship in world.relationships
+        ),
     )
 
 
