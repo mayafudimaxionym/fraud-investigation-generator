@@ -6,7 +6,9 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 from generator.artifacts.manifest import InvestigatorViewManifest
+from generator.case import CanonicalCase
 from generator.events.models import CanonicalEvent
+from generator.metadata import GenerationMetadata
 from generator.scenario.blueprint import CaseBlueprint
 from generator.seed import derive_seed
 from generator.world.campaigns import FraudCampaign
@@ -253,6 +255,24 @@ def build_investigator_view_manifest(
         visible_relationship_ids=tuple(
             relationship.relationship_id for relationship in world.relationships
         ),
+    )
+
+
+def build_canonical_case(
+    case_id: str,
+    blueprint: CaseBlueprint,
+    metadata: GenerationMetadata,
+) -> CanonicalCase:
+    """Compose a complete in-memory case from existing deterministic builders."""
+    world = build_minimal_world(blueprint, metadata.master_seed)
+    return CanonicalCase(
+        case_id=case_id,
+        metadata=metadata,
+        scenario=blueprint.scenario,
+        world=world,
+        ground_truth=build_ground_truth_manifest(blueprint, world),
+        investigator_view=build_investigator_view_manifest(world),
+        artifacts=(),
     )
 
 
