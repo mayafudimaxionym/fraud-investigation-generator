@@ -43,7 +43,11 @@ def build_development_case() -> CanonicalCase:
 
 def export_development_case(output_root: Path) -> Path:
     """Write development-only inspection CSVs and return the case directory."""
-    case = build_development_case()
+    return export_case_for_inspection(build_development_case(), output_root)
+
+
+def export_case_for_inspection(case: CanonicalCase, output_root: Path) -> Path:
+    """Write a supplied in-memory case for local inspection only."""
     case_directory = output_root / case.case_id
     internal_directory = case_directory / "internal"
     investigator_directory = case_directory / "investigator_view"

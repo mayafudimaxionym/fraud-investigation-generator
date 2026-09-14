@@ -10,6 +10,8 @@ Ollama is reserved for constrained narrative, ambiguity, and human-facing artifa
 
 ## Status
 
-The repository currently contains dependency-free domain contracts and deterministic validation foundations. It does not yet generate synthetic cases or invoke Ollama.
+The repository generates deterministic in-memory cases and includes a constrained, local Ollama adapter for development-only investigator-visible artifact generation. No production persistence format or external dependency is used.
+
+To generate the fixed local review case with artifacts, start Ollama locally and run `python -m generator.dev.generate_artifacts`. Configure `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT_SECONDS`, `OLLAMA_TEMPERATURE`, or `OLLAMA_SEED` only when defaults are unsuitable.
 
 Development is intentionally incremental: each small, approved change is validated before the next step. See [PROJECT_STATUS.md](PROJECT_STATUS.md) for current progress and [docs/architecture.md](docs/architecture.md) for the architecture.

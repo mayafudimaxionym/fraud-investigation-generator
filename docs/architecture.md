@@ -27,7 +27,7 @@ Python owns canonical facts: identifiers, timestamps, relationships, events, fra
 
 Ollama is reserved for language generation around constrained, Python-provided facts. Its role is narrative, controlled ambiguity, and messy human artifacts. It must not silently invent canonical IDs, timestamps, relationships, amounts, events, or fraud truth.
 
-The artifact interface is structured: Python sends an explicit request containing the allowed canonical facts, and Python validates the returned language before associating it with a known artifact.
+The artifact interface is structured: Python constructs investigator-only context from visible entities, relationships, and events, then deterministically derives factual assertions from those records. It does not pass a canonical world wholesale, ground truth, campaigns, signals, private membership, or the correct hypothesis. For factual artifacts, Ollama returns only selected assertion IDs and their order; Python renders the final factual spine. Interpretive artifacts may add a separately labeled, non-authoritative human explanation, while Python preserves the same factual spine. Python rejects model-assigned identity fields, unapproved assertion IDs, and disallowed canonical-ID references before associating text with a known artifact.
 
 ## Determinism and validation
 
