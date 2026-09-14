@@ -13,6 +13,7 @@ class CanonicalSignal:
     signal_type: str
     supporting_entity_ids: tuple[str, ...] = ()
     supporting_event_ids: tuple[str, ...] = ()
+    is_red_herring: bool = False
 
     def __post_init__(self) -> None:
         if not self.signal_id.strip():
@@ -21,3 +22,5 @@ class CanonicalSignal:
             raise ValueError("signal_type must be non-empty")
         if not self.supporting_entity_ids and not self.supporting_event_ids:
             raise ValueError("a signal must reference supporting evidence")
+        if not isinstance(self.is_red_herring, bool):
+            raise ValueError("is_red_herring must be a boolean")

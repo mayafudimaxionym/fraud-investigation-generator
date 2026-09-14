@@ -42,17 +42,17 @@ def test_ground_truth_manifest_generation_covers_campaign_truth_and_red_herring(
     world = build_minimal_world(blueprint, 427)
 
     manifest = build_ground_truth_manifest(blueprint, world)
-    expected_causal_signal_ids = tuple(
+    expected_causal_signal_ids = _stable_unique(
         signal_id
         for campaign in world.campaigns
         for signal_id in campaign.causal_signal_ids
     )
-    expected_entity_ids = tuple(
+    expected_entity_ids = _stable_unique(
         entity_id
         for campaign in world.campaigns
         for entity_id in campaign.fraudulent_entity_ids
     )
-    expected_event_ids = tuple(
+    expected_event_ids = _stable_unique(
         event_id
         for campaign in world.campaigns
         for event_id in campaign.fraudulent_event_ids
@@ -60,8 +60,7 @@ def test_ground_truth_manifest_generation_covers_campaign_truth_and_red_herring(
     lookalike_signal = next(
         signal
         for signal in world.signals
-        if signal.signal_type == "shared_device_login_transfer"
-        and signal.signal_id not in expected_causal_signal_ids
+        if signal.is_red_herring
     )
 
     assert manifest.campaign_ids == tuple(
@@ -72,4 +71,14 @@ def test_ground_truth_manifest_generation_covers_campaign_truth_and_red_herring(
     assert manifest.causal_signal_ids == expected_causal_signal_ids
     assert manifest.red_herring_ids == (lookalike_signal.signal_id,)
     assert lookalike_signal.signal_id not in manifest.causal_signal_ids
+    assert any(
+        signal.signal_id not in manifest.causal_signal_ids
+        and not signal.is_red_herring
+        and signal.signal_id not in manifest.red_herring_ids
+        for signal in world.signals
+    )
     assert manifest.correct_hypothesis == blueprint.correct_hypothesis
+
+
+def _stable_unique(identifiers: object) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(identifiers))

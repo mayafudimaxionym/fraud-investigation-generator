@@ -5,6 +5,7 @@ from generator.scenario.spec import ScenarioSpec
 from generator.validation.temporal import validate_event_precedence
 from generator.validation.world import validate_world_references
 from generator.world.generation import build_minimal_world
+from generator.world.model import CanonicalWorld
 
 
 def _blueprint(campaign_count: int = 2) -> CaseBlueprint:
@@ -60,220 +61,124 @@ def test_generated_record_ids_are_opaque_to_private_interpretation() -> None:
             "relationship-",
             (relationship.relationship_id for relationship in world.relationships),
         ),
+        ("signal-", (signal.signal_id for signal in world.signals)),
     ):
         for identifier in identifiers:
             assert identifier.startswith(prefix)
             assert not any(label in identifier for label in private_labels)
 
 
-def test_minimal_world_generation_creates_isolated_shared_device_campaigns() -> None:
+def test_population_contains_background_overlap_and_campaign_coordination() -> None:
     world = build_minimal_world(_blueprint(campaign_count=2), 427)
     entities_by_id = {entity.entity_id: entity for entity in world.entities}
-    signals_by_id = {signal.signal_id: signal for signal in world.signals}
-    device_ids = {
-        entity.entity_id for entity in world.entities if entity.entity_type == "device"
+    fraud_account_ids = {
+        entity_id
+        for campaign in world.campaigns
+        for entity_id in campaign.fraudulent_entity_ids
+        if entities_by_id[entity_id].entity_type == "account"
+    }
+    legitimate_account_ids = {
+        entity.entity_id
+        for entity in world.entities
+        if entity.entity_type == "account" and entity.entity_id not in fraud_account_ids
+    }
+    causal_signal_ids = {
+        signal_id
+        for campaign in world.campaigns
+        for signal_id in campaign.causal_signal_ids
     }
 
-    assert len(world.entities) == 13
-    assert len(world.relationships) == 12
-    assert len(world.events) == 12
-    assert len(world.signals) == 5
-    assert len(device_ids) == 3
+    assert validate_world_references(world) == ()
+    assert 40 <= len(
+        [entity for entity in world.entities if entity.entity_type == "account"]
+    ) <= 60
+    assert len(world.events) >= 180
+    assert len(world.campaigns) == 2
+    assert any(
+        signal.is_red_herring and signal.signal_id not in causal_signal_ids
+        for signal in world.signals
+    )
+    assert any(
+        not signal.is_red_herring and signal.signal_id not in causal_signal_ids
+        for signal in world.signals
+    )
 
-    campaign_device_ids: set[str] = set()
-    campaign_entity_ids: set[str] = set()
-    campaign_event_ids: set[str] = set()
-    campaign_signal_ids: set[str] = set()
-    campaign_beneficiary_ids: set[str] = set()
-    fraud_transfer_latencies: list[timedelta] = []
+    campaign_network_ids = [
+        {
+            entity_id
+            for entity_id in campaign.fraudulent_entity_ids
+            if entities_by_id[entity_id].entity_type == "network"
+        }
+        for campaign in world.campaigns
+    ]
+    assert all(network_ids for network_ids in campaign_network_ids)
+    shared_network_ids = set.intersection(*campaign_network_ids)
+    assert shared_network_ids
+    assert any(
+        relationship.relationship_type == "uses_network"
+        and relationship.target_entity_id in shared_network_ids
+        and relationship.source_entity_id not in {
+            entity_id
+            for campaign in world.campaigns
+            for entity_id in campaign.fraudulent_entity_ids
+            if entities_by_id[entity_id].entity_type == "device"
+        }
+        for relationship in world.relationships
+    )
+
     for campaign in world.campaigns:
-        account_ids = {
+        campaign_account_ids = {
             entity_id
             for entity_id in campaign.fraudulent_entity_ids
             if entities_by_id[entity_id].entity_type == "account"
         }
-        campaign_device_id = next(
-            entity_id
-            for entity_id in campaign.fraudulent_entity_ids
-            if entities_by_id[entity_id].entity_type == "device"
+        campaign_event_ids = set(campaign.fraudulent_event_ids)
+        assert len(campaign_event_ids) == 4
+        assert all(
+            len(
+                [event for event in world.events if event.subject_entity_id == account_id]
+            ) > 2
+            for account_id in campaign_account_ids
         )
-        campaign_beneficiary_id = next(
-            entity_id
-            for entity_id in campaign.fraudulent_entity_ids
-            if entities_by_id[entity_id].entity_type == "beneficiary"
-        )
-        signal = next(
-            signals_by_id[signal_id]
-            for signal_id in campaign.causal_signal_ids
-            if signals_by_id[signal_id].signal_type == "shared_device_login_transfer"
-        )
-        beneficiary_signal = next(
-            signals_by_id[signal_id]
-            for signal_id in campaign.causal_signal_ids
-            if signals_by_id[signal_id].signal_type == "shared_beneficiary"
-        )
-        campaign_events = [
-            event
-            for event in world.events
-            if event.event_id in campaign.fraudulent_event_ids
-        ]
-        login_events = [event for event in campaign_events if event.event_type == "login"]
-        transfer_events = [
-            event for event in campaign_events if event.event_type == "transfer"
-        ]
-        relationships = [
-            relationship
-            for relationship in world.relationships
-            if relationship.source_entity_id in account_ids
-            and relationship.target_entity_id == campaign_device_id
-            and relationship.relationship_type == "uses_device"
-        ]
-        beneficiary_relationships = [
-            relationship
-            for relationship in world.relationships
-            if relationship.source_entity_id in account_ids
-            and relationship.target_entity_id == campaign_beneficiary_id
-            and relationship.relationship_type == "transfers_to"
-        ]
 
-        campaign_device_ids.add(campaign_device_id)
-        campaign_entity_ids.update(campaign.fraudulent_entity_ids)
-        campaign_event_ids.update(campaign.fraudulent_event_ids)
-        campaign_signal_ids.update(campaign.causal_signal_ids)
-        campaign_beneficiary_ids.add(campaign_beneficiary_id)
-        assert len(campaign.fraudulent_entity_ids) == 4
-        assert len(campaign.fraudulent_event_ids) == 4
-        assert len(campaign.causal_signal_ids) == 2
-        assert len(account_ids) == 2
-        assert len(relationships) == 2
-        assert len(beneficiary_relationships) == 2
-        assert signal.signal_type == "shared_device_login_transfer"
-        assert len(login_events) == 2
-        assert len(transfer_events) == 2
-        login_spacing = login_events[1].occurred_at - login_events[0].occurred_at
-        assert timedelta(seconds=1) <= login_spacing <= timedelta(seconds=15)
-        assert set(signal.supporting_entity_ids) == account_ids | {campaign_device_id}
-        assert set(signal.supporting_event_ids) == set(campaign.fraudulent_event_ids)
-        assert set(beneficiary_signal.supporting_entity_ids) == account_ids | {
-            campaign_beneficiary_id
-        }
-        assert set(beneficiary_signal.supporting_event_ids) == {
-            event.event_id for event in transfer_events
-        }
+    assert _has_shared_target(world, fraud_account_ids, "uses_device")
+    assert _has_shared_target(world, legitimate_account_ids, "uses_device")
+    assert _has_shared_target(world, fraud_account_ids, "transfers_to")
+    assert _has_shared_target(world, legitimate_account_ids, "transfers_to")
+    assert _has_rapid_login_transfer(world, fraud_account_ids)
+    assert _has_rapid_login_transfer(world, legitimate_account_ids)
 
-        for account_id in account_ids:
-            login_event = next(
-                event
-                for event in login_events
-                if event.subject_entity_id == account_id
+
+def _has_shared_target(
+    world: CanonicalWorld, account_ids: set[str], relationship_type: str
+) -> bool:
+    sources_by_target: dict[str, set[str]] = {}
+    for relationship in world.relationships:
+        if (
+            relationship.relationship_type == relationship_type
+            and relationship.source_entity_id in account_ids
+        ):
+            sources_by_target.setdefault(relationship.target_entity_id, set()).add(
+                relationship.source_entity_id
             )
-            transfer_event = next(
-                event
-                for event in transfer_events
-                if event.subject_entity_id == account_id
-            )
-            assert validate_event_precedence(login_event, transfer_event) == ()
-            assert transfer_event.target_entity_id == campaign_beneficiary_id
-            fraud_transfer_latencies.append(
-                transfer_event.occurred_at - login_event.occurred_at
-            )
+    return any(len(source_ids) >= 2 for source_ids in sources_by_target.values())
 
-    assert fraud_transfer_latencies.count(timedelta(seconds=30)) == len(world.campaigns)
-    assert sum(
-        timedelta(minutes=8) <= latency <= timedelta(minutes=20)
-        for latency in fraud_transfer_latencies
-    ) == len(world.campaigns)
-    assert len(campaign_beneficiary_ids) == len(world.campaigns)
 
-    lookalike_entity_ids = set(entities_by_id) - campaign_entity_ids
-    lookalike_event_ids = {event.event_id for event in world.events} - campaign_event_ids
-    lookalike_signal_ids = set(signals_by_id) - campaign_signal_ids
-    lookalike_device_ids = {
-        entity_id
-        for entity_id in lookalike_entity_ids
-        if entities_by_id[entity_id].entity_type == "device"
-    }
-    lookalike_account_ids = {
-        entity_id
-        for entity_id in lookalike_entity_ids
-        if entities_by_id[entity_id].entity_type == "account"
-    }
-    lookalike_beneficiary_ids = {
-        entity_id
-        for entity_id in lookalike_entity_ids
-        if entities_by_id[entity_id].entity_type == "beneficiary"
-    }
-    lookalike_signal = signals_by_id[next(iter(lookalike_signal_ids))]
-    lookalike_events = [
-        event for event in world.events if event.event_id in lookalike_event_ids
-    ]
-    lookalike_logins = [
-        event for event in lookalike_events if event.event_type == "login"
-    ]
-    lookalike_transfers = [
-        event for event in lookalike_events if event.event_type == "transfer"
-    ]
-    lookalike_relationships = [
-        relationship
-        for relationship in world.relationships
-        if relationship.source_entity_id in lookalike_account_ids
-        and relationship.target_entity_id in lookalike_device_ids
-        and relationship.relationship_type == "uses_device"
-    ]
-    lookalike_beneficiary_relationships = [
-        relationship
-        for relationship in world.relationships
-        if relationship.source_entity_id in lookalike_account_ids
-        and relationship.target_entity_id in lookalike_beneficiary_ids
-        and relationship.relationship_type == "transfers_to"
-    ]
-
-    assert campaign_device_ids.isdisjoint(lookalike_device_ids)
-    assert len(lookalike_device_ids) == 1
-    assert len(lookalike_account_ids) == 2
-    assert len(lookalike_beneficiary_ids) == 2
-    assert len(lookalike_relationships) == 2
-    assert len(lookalike_beneficiary_relationships) == 2
-    assert campaign_beneficiary_ids.isdisjoint(lookalike_beneficiary_ids)
-    assert len(lookalike_signal_ids) == 1
-    assert lookalike_signal.signal_type == "shared_device_login_transfer"
-    assert set(lookalike_signal.supporting_entity_ids) == (
-        lookalike_account_ids | lookalike_device_ids
-    )
-    assert set(lookalike_signal.supporting_event_ids) == lookalike_event_ids
-    assert len(lookalike_logins) == 2
-    assert len(lookalike_transfers) == 2
-    assert {
-        event.target_entity_id for event in lookalike_transfers
-    } == lookalike_beneficiary_ids
-    lookalike_login_spacing = (
-        lookalike_logins[1].occurred_at - lookalike_logins[0].occurred_at
-    )
-    assert timedelta(seconds=1) <= lookalike_login_spacing <= timedelta(seconds=15)
-
-    lookalike_transfer_latencies: list[timedelta] = []
-    for account_id in lookalike_account_ids:
-        login_event = next(
-            event
-            for event in lookalike_logins
-            if event.subject_entity_id == account_id
-        )
-        transfer_event = next(
-            event
-            for event in lookalike_transfers
-            if event.subject_entity_id == account_id
-        )
-        transfer_latency = transfer_event.occurred_at - login_event.occurred_at
-
-        assert validate_event_precedence(login_event, transfer_event) == ()
-        assert transfer_event.target_entity_id in lookalike_beneficiary_ids
-        assert sum(
-            relationship.source_entity_id == account_id
-            and relationship.target_entity_id == transfer_event.target_entity_id
-            for relationship in lookalike_beneficiary_relationships
-        ) == 1
-        assert timedelta(minutes=8) <= transfer_latency <= timedelta(minutes=20)
-        assert transfer_latency > timedelta(seconds=30)
-        lookalike_transfer_latencies.append(transfer_latency)
-
-    assert set(fraud_transfer_latencies) & set(lookalike_transfer_latencies)
+def _has_rapid_login_transfer(world: CanonicalWorld, account_ids: set[str]) -> bool:
+    events_by_account = {}
+    for event in world.events:
+        if event.subject_entity_id in account_ids:
+            events_by_account.setdefault(event.subject_entity_id, []).append(event)
+    for account_events in events_by_account.values():
+        ordered_events = sorted(account_events, key=lambda event: event.occurred_at)
+        for login_event, transfer_event in zip(ordered_events, ordered_events[1:]):
+            if (
+                login_event.event_type == "login"
+                and transfer_event.event_type == "transfer"
+                and timedelta(0)
+                < transfer_event.occurred_at - login_event.occurred_at
+                <= timedelta(seconds=60)
+            ):
+                assert validate_event_precedence(login_event, transfer_event) == ()
+                return True
+    return False
