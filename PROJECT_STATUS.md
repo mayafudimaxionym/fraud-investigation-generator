@@ -2,7 +2,7 @@
 
 ## Current stage
 
-Deterministic canonical-case generation and bounded investigator-visible artifact generation. The project now has a local Ollama adapter for development-only human-language artifacts, while Python retains all canonical truth and validation ownership.
+Synthetic-case fixture complete and frozen for the current agent-driven investigation-framework test. The project provides deterministic canonical generation, a separated investigator package, evaluator-only truth material, and bounded artifact generation while Python retains all canonical truth and validation ownership.
 
 ## Completed
 
@@ -27,6 +27,9 @@ Deterministic canonical-case generation and bounded investigator-visible artifac
 - Python deterministically derives investigator-visible `ArtifactAssertion` atoms from entities, relationships, and events. Factual model responses can only select/order/omit those assertions; Python renders final factual prose. Interpretive artifacts retain that factual spine and add a separately labeled non-authoritative interpretation.
 - Python validates selected assertion IDs, canonical IDs mentioned in interpretations, and attaches artifacts immutably to a new `CanonicalCase` while updating the investigator view.
 - A development-only local Ollama script generates five fixed requests for `development-case-42` and exports artifact text with investigator-visible structured data for review.
+- The final deterministic `development-case-42` investigator package exports visible CSV evidence and three Python-owned text fixtures under `investigator/`, with private CSV records and ground truth physically separated under `evaluator_only/`.
+- The final package exporter removes and recreates only its own fixed case directory, guaranteeing that obsolete development exports cannot survive in the package.
+- Package tests verify directory-level truth separation and direct-conclusion leakage safeguards in the fixed text fixtures.
 
 ## Current uncommitted work
 
@@ -34,13 +37,13 @@ No uncommitted implementation work.
 
 ## Current blockers
 
-- Python is unavailable on this agent shell's `PATH`, so the suite cannot be executed here. The latest user-run local suite passed 77/77.
-- Factual customer, support, and operational artifacts are structured and grounded, but are not yet realistic human documents. Improving natural document realism is the next development concern; it must preserve the approved assertion-grounding boundary.
+- Python is unavailable on this agent shell's `PATH`, so the suite cannot be executed here. The accepted user-run local suite passed 81/81.
+- Factual customer, support, and operational artifacts are structured and grounded, but are not yet realistic human documents. This remains a future concern and is intentionally outside the frozen synthetic-case fixture.
 - Git whitespace checks have passed for the implemented changes.
 
 ## Next approved step
 
-No new implementation step is approved. The assertion-based factual-grounding foundation was manually verified through successful local Ollama generation with `llama3:8b`.
+No further synthetic-case work is approved. The fixture is frozen for the current investigation-framework test; the next program phase is the main agent-driven investigation framework.
 
 ## Architectural constraints
 

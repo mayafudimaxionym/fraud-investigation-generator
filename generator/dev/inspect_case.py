@@ -49,13 +49,25 @@ def export_development_case(output_root: Path) -> Path:
 def export_case_for_inspection(case: CanonicalCase, output_root: Path) -> Path:
     """Write a supplied in-memory case for local inspection only."""
     case_directory = output_root / case.case_id
-    internal_directory = case_directory / "internal"
-    investigator_directory = case_directory / "investigator_view"
-    internal_directory.mkdir(parents=True, exist_ok=True)
-    investigator_directory.mkdir(parents=True, exist_ok=True)
+    write_case_csv_exports(
+        case, case_directory / "internal", case_directory / "investigator_view"
+    )
+    return case_directory
 
+
+def write_case_csv_exports(
+    case: CanonicalCase, private_directory: Path, visible_directory: Path
+) -> None:
+    """Write existing private and visible CSV views to supplied directories."""
+    private_directory.mkdir(parents=True, exist_ok=True)
+    visible_directory.mkdir(parents=True, exist_ok=True)
+    _write_private_exports(case, private_directory)
+    _write_visible_exports(case, visible_directory)
+
+
+def _write_private_exports(case: CanonicalCase, directory: Path) -> None:
     _write_csv(
-        internal_directory / "entities.csv",
+        directory / "entities.csv",
         ("entity_id", "entity_type"),
         (
             {"entity_id": entity.entity_id, "entity_type": entity.entity_type}
@@ -63,13 +75,8 @@ def export_case_for_inspection(case: CanonicalCase, output_root: Path) -> Path:
         ),
     )
     _write_csv(
-        internal_directory / "relationships.csv",
-        (
-            "relationship_id",
-            "source_entity_id",
-            "target_entity_id",
-            "relationship_type",
-        ),
+        directory / "relationships.csv",
+        ("relationship_id", "source_entity_id", "target_entity_id", "relationship_type"),
         (
             {
                 "relationship_id": relationship.relationship_id,
@@ -81,24 +88,13 @@ def export_case_for_inspection(case: CanonicalCase, output_root: Path) -> Path:
         ),
     )
     _write_csv(
-        internal_directory / "events.csv",
-        (
-            "event_id",
-            "event_type",
-            "subject_entity_id",
-            "target_entity_id",
-            "occurred_at",
-        ),
+        directory / "events.csv",
+        ("event_id", "event_type", "subject_entity_id", "target_entity_id", "occurred_at"),
         (_event_row(event) for event in case.world.events),
     )
     _write_csv(
-        internal_directory / "signals.csv",
-        (
-            "signal_id",
-            "signal_type",
-            "supporting_entity_ids",
-            "supporting_event_ids",
-        ),
+        directory / "signals.csv",
+        ("signal_id", "signal_type", "supporting_entity_ids", "supporting_event_ids"),
         (
             {
                 "signal_id": signal.signal_id,
@@ -110,14 +106,10 @@ def export_case_for_inspection(case: CanonicalCase, output_root: Path) -> Path:
         ),
     )
     _write_csv(
-        internal_directory / "campaigns.csv",
+        directory / "campaigns.csv",
         (
-            "campaign_id",
-            "mechanism",
-            "actor_entity_ids",
-            "fraudulent_entity_ids",
-            "fraudulent_event_ids",
-            "causal_signal_ids",
+            "campaign_id", "mechanism", "actor_entity_ids", "fraudulent_entity_ids",
+            "fraudulent_event_ids", "causal_signal_ids",
         ),
         (
             {
@@ -132,83 +124,51 @@ def export_case_for_inspection(case: CanonicalCase, output_root: Path) -> Path:
         ),
     )
     _write_csv(
-        internal_directory / "ground_truth.csv",
+        directory / "ground_truth.csv",
         ("field", "value"),
         (
             {"field": "campaign_ids", "value": _json_array(case.ground_truth.campaign_ids)},
-            {
-                "field": "fraudulent_entity_ids",
-                "value": _json_array(case.ground_truth.fraudulent_entity_ids),
-            },
-            {
-                "field": "fraudulent_event_ids",
-                "value": _json_array(case.ground_truth.fraudulent_event_ids),
-            },
-            {
-                "field": "causal_signal_ids",
-                "value": _json_array(case.ground_truth.causal_signal_ids),
-            },
-            {
-                "field": "red_herring_ids",
-                "value": _json_array(case.ground_truth.red_herring_ids),
-            },
-            {
-                "field": "correct_hypothesis",
-                "value": case.ground_truth.correct_hypothesis,
-            },
+            {"field": "fraudulent_entity_ids", "value": _json_array(case.ground_truth.fraudulent_entity_ids)},
+            {"field": "fraudulent_event_ids", "value": _json_array(case.ground_truth.fraudulent_event_ids)},
+            {"field": "causal_signal_ids", "value": _json_array(case.ground_truth.causal_signal_ids)},
+            {"field": "red_herring_ids", "value": _json_array(case.ground_truth.red_herring_ids)},
+            {"field": "correct_hypothesis", "value": case.ground_truth.correct_hypothesis},
         ),
     )
 
-    entities_by_id = {entity.entity_id: entity for entity in case.world.entities}
-    relationships_by_id = {
-        relationship.relationship_id: relationship
-        for relationship in case.world.relationships
+
+def _write_visible_exports(case: CanonicalCase, directory: Path) -> None:
+    entities = {entity.entity_id: entity for entity in case.world.entities}
+    relationships = {
+        relationship.relationship_id: relationship for relationship in case.world.relationships
     }
-    events_by_id = {event.event_id: event for event in case.world.events}
+    events = {event.event_id: event for event in case.world.events}
     _write_csv(
-        investigator_directory / "visible_entities.csv",
+        directory / "visible_entities.csv",
         ("entity_id", "entity_type"),
         (
-            {
-                "entity_id": entities_by_id[entity_id].entity_id,
-                "entity_type": entities_by_id[entity_id].entity_type,
-            }
-            for entity_id in case.investigator_view.visible_entity_ids
+            {"entity_id": entities[identifier].entity_id, "entity_type": entities[identifier].entity_type}
+            for identifier in case.investigator_view.visible_entity_ids
         ),
     )
     _write_csv(
-        investigator_directory / "visible_relationships.csv",
-        (
-            "relationship_id",
-            "source_entity_id",
-            "target_entity_id",
-            "relationship_type",
-        ),
+        directory / "visible_relationships.csv",
+        ("relationship_id", "source_entity_id", "target_entity_id", "relationship_type"),
         (
             {
-                "relationship_id": relationships_by_id[relationship_id].relationship_id,
-                "source_entity_id": relationships_by_id[relationship_id].source_entity_id,
-                "target_entity_id": relationships_by_id[relationship_id].target_entity_id,
-                "relationship_type": relationships_by_id[relationship_id].relationship_type,
+                "relationship_id": relationships[identifier].relationship_id,
+                "source_entity_id": relationships[identifier].source_entity_id,
+                "target_entity_id": relationships[identifier].target_entity_id,
+                "relationship_type": relationships[identifier].relationship_type,
             }
-            for relationship_id in case.investigator_view.visible_relationship_ids
+            for identifier in case.investigator_view.visible_relationship_ids
         ),
     )
     _write_csv(
-        investigator_directory / "visible_events.csv",
-        (
-            "event_id",
-            "event_type",
-            "subject_entity_id",
-            "target_entity_id",
-            "occurred_at",
-        ),
-        (
-            _event_row(events_by_id[event_id])
-            for event_id in case.investigator_view.visible_event_ids
-        ),
+        directory / "visible_events.csv",
+        ("event_id", "event_type", "subject_entity_id", "target_entity_id", "occurred_at"),
+        (_event_row(events[identifier]) for identifier in case.investigator_view.visible_event_ids),
     )
-    return case_directory
 
 
 def _event_row(event: CanonicalEvent) -> dict[str, str]:
@@ -238,8 +198,7 @@ def _write_csv(
 
 def main() -> None:
     """Export the fixed inspection case beneath the local output directory."""
-    case_directory = export_development_case(Path("output"))
-    print(case_directory)
+    print(export_development_case(Path("output")))
 
 
 if __name__ == "__main__":
