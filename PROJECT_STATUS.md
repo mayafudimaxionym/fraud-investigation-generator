@@ -4,6 +4,13 @@
 
 Synthetic-case fixture complete and frozen for the current agent-driven investigation-framework test. The project provides deterministic canonical generation, a separated investigator package, evaluator-only truth material, and bounded artifact generation while Python retains all canonical truth and validation ownership.
 
+## Architecture baseline
+
+- `docs/ARCHITECTURE.md` is the authoritative architecture and scope reference for the fraud investigation framework.
+- New framework implementation must preserve the architectural invariants defined there.
+- Any proposed implementation that conflicts with an invariant or materially changes the architecture must be identified explicitly and approved before implementation.
+- The synthetic investigation package is frozen test infrastructure and should not be expanded unless framework testing exposes a concrete requirement.
+
 ## Completed
 
 - Git is initialized, linked to GitHub, and the current commits are pushed.
