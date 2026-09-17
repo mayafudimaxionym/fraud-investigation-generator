@@ -1,6 +1,6 @@
 # V0 — Agent / Human Approval Loop
 
-**Status:** DESIGN IN PROGRESS
+**Status:** APPROVED FOR IMPLEMENTATION
 
 ## Goal
 
@@ -96,7 +96,9 @@ Declining an action does not authorize a similar or replacement action. Any repl
 
 - Modify applies to the current proposed action.
 - The human provides an instruction describing the requested change.
+- The original proposal becomes `MODIFIED` and is no longer pending.
 - The agent produces a revised proposal containing the five mandatory proposal fields.
+- The revised proposal is a new `PROPOSED` proposal with lineage to the original proposal.
 - Modification itself does not authorize execution.
 - The revised proposal requires a new Approve, Modify, or Decline decision.
 
@@ -131,6 +133,13 @@ Persist every analytical-action proposal. Each proposal must retain:
 - Creation timestamp.
 - Lineage to the prior proposal when the proposal is a revision produced through Modify.
 
+V0 proposal statuses are:
+
+- `PROPOSED` — awaiting a human decision.
+- `APPROVED` — the exact proposal was approved.
+- `DECLINED` — the exact proposal was declined.
+- `MODIFIED` — the human requested modification of the proposal; the original proposal is no longer pending and a new proposal must be created for the revised action.
+
 Historical proposals must not be overwritten by revised proposals.
 
 ### Human decisions
@@ -143,7 +152,7 @@ Persist every human review decision. Each decision must retain:
 - Timestamp.
 - Human-provided instruction or reason when applicable.
 
-For Modify, the human modification instruction is retained, the resulting revised proposal is stored as a new proposal, and lineage between the original and revised proposal is preserved.
+For Modify, the immutable human modification instruction is retained separately, the original proposal's status becomes `MODIFIED`, the resulting revised proposal is stored as a new `PROPOSED` proposal, and lineage between the original and revised proposal is preserved.
 
 For Decline, the optional decline reason or instruction is retained when supplied.
 
@@ -214,13 +223,13 @@ When an investigation starts, the agent receives enough investigator-visible con
 
 ### Context provided automatically
 
-The agent may receive the contents of the investigator-facing contextual artifacts:
+The agent receives the contents of the investigator-facing contextual artifacts:
 
 - Investigation request.
 - Customer or support statement.
 - Prior analyst note.
 
-The agent may also receive a safe inventory of the investigator-visible structured datasets. For each available structured dataset, this inventory may include descriptive metadata needed to understand what data is available, such as:
+The agent also receives a safe inventory of the investigator-visible structured datasets. For each available structured dataset, this inventory may include descriptive metadata needed to understand what data is available, such as:
 
 - Dataset or file name.
 - Dataset description when available.
@@ -371,7 +380,123 @@ The previously approved investigator-visible structured-data boundary remains au
 
 No further V0 product or architecture design decisions remain open.
 
-The V0 acceptance criteria are defined by the approved requirements in this specification.
+Future-milestone questions are not V0 blockers. Implementation may make ordinary engineering choices within the approved architecture and this specification. Any implementation discovery that requires changing approved product behavior or an architectural invariant must be escalated rather than silently resolved.
+
+## Acceptance criteria
+
+V0 is complete when all of the following are demonstrated:
+
+### 1. Local startup
+
+The V0 application can be started locally and opened in a browser without requiring a cloud service.
+
+### 2. Safe case loading
+
+The application loads the frozen investigator package.
+
+The agent receives:
+
+- The three approved investigator-facing contextual artifacts.
+- The approved safe inventory of investigator-visible structured datasets.
+
+The agent does not receive:
+
+- Raw structured dataset rows automatically.
+- Evaluator-only contents.
+- Evaluator-only filenames or inventory.
+- Evaluator-only schemas or metadata.
+- Evaluator-derived ground truth.
+
+### 3. Investigator instruction → agent proposal
+
+The human investigator can provide a natural-language investigation instruction to the local agent.
+
+The agent returns:
+
+- A provisional investigation plan.
+- Exactly one proposed next analytical action.
+
+The proposed action contains all five mandatory fields:
+
+- Action.
+- Purpose.
+- Why now.
+- Data to be used.
+- Expected output.
+
+### 4. Approve works
+
+The investigator can approve the proposed action.
+
+The system:
+
+- Persists the exact proposal.
+- Persists the approval.
+- Clearly shows that the action is approved but not executed in V0.
+
+No analytical execution or simulated analytical result occurs.
+
+### 5. Modify works end-to-end
+
+The investigator can provide a natural-language modification instruction.
+
+The system preserves:
+
+- The original proposal.
+- The Modify decision.
+- The human modification instruction.
+
+The agent produces a new five-field proposal.
+
+The revised proposal:
+
+- Is stored as a new proposal.
+- Preserves lineage to the original proposal.
+- Requires a new Approve, Modify, or Decline decision.
+
+### 6. Decline works end-to-end
+
+The investigator can decline a proposal with or without an optional reason or instruction.
+
+The system persists:
+
+- The declined proposal.
+- The Decline decision.
+- The optional human reason or instruction when supplied.
+
+The agent may reconsider its provisional plan and produce a new proposal.
+
+Neither the declined action nor any replacement action is implicitly authorized.
+
+### 7. Persistence survives restart
+
+After the application is closed and reopened, the investigation and complete proposal and decision trail can be reconstructed from local SQLite persistence.
+
+This includes:
+
+- Proposals.
+- Decisions.
+- Proposal revision lineage.
+- Modification instructions.
+- Decline reasons or instructions when supplied.
+
+Reconstruction must not depend on:
+
+- Chat history.
+- LLM memory.
+
+### 8. Architecture boundaries are demonstrated
+
+V0 demonstrates that:
+
+- The LLM operates locally.
+- The Streamlit application operates locally.
+- SQLite persistence operates locally.
+- No cloud LLM or cloud data dependency is required.
+- Raw structured datasets are not automatically exposed to the agent.
+- Evaluator-only information is outside the investigator runtime boundary.
+- Proposed analytical actions are not executed in V0.
+- The frozen synthetic investigation fixture is not expanded or redesigned.
 
 ## Out of scope
 
