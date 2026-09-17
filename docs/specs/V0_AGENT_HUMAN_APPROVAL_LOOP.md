@@ -208,14 +208,77 @@ The SQLite representation must preserve the already-approved immutable historica
 
 This decision selects the V0 persistence implementation only. It does not design the future V1 or V2 persistence model.
 
+## Initial agent context
+
+When an investigation starts, the agent receives enough investigator-visible context to understand the investigation and decide what analytical action to propose next.
+
+### Context provided automatically
+
+The agent may receive the contents of the investigator-facing contextual artifacts:
+
+- Investigation request.
+- Customer or support statement.
+- Prior analyst note.
+
+The agent may also receive a safe inventory of the investigator-visible structured datasets. For each available structured dataset, this inventory may include descriptive metadata needed to understand what data is available, such as:
+
+- Dataset or file name.
+- Dataset description when available.
+- Row count.
+- Field or column names.
+- Basic schema or type information when available.
+
+This inventory describes available data. It is not analytical access to the dataset contents.
+
+### Raw structured data
+
+The agent must not automatically receive the raw row contents of investigator-visible structured datasets as LLM context. This includes raw visible entities, visible relationships, and visible events.
+
+Knowing that a dataset exists is distinct from accessing or analyzing its underlying records.
+
+When the agent determines that structured data should be analyzed, it proposes a next analytical action using the already-approved five-field proposal contract, including the specific data sources requested.
+
+In V0, that proposal can be reviewed and approved, modified, or declined, but no analytical execution occurs. In the later controlled-execution milestone, approved analytical access will be performed through the controlled analytical executor rather than by giving the agent unrestricted direct access to the raw dataset.
+
+## Evaluator isolation
+
+Evaluator-only material is completely outside the investigator runtime boundary.
+
+The investigation agent must not receive:
+
+- Evaluator-only file contents.
+- Evaluator-only filenames or inventory.
+- Evaluator-only schemas or metadata.
+- Ground-truth information derived from evaluator-only sources.
+
+The investigator-facing loading and context mechanism must operate only on investigator-visible material.
+
+Evaluator isolation must not rely solely on prompt instructions telling the LLM to ignore evaluator data.
+
+## Architectural distinction
+
+Local and on-premise operation and governed agent data access are separate requirements. Running the LLM locally does not grant the agent unrestricted access to locally stored raw data.
+
+The intended boundary is:
+
+```text
+Agent
+  → understands available investigator-visible context/data inventory
+  → proposes analytical action
+  → human review
+  → controlled executor in a later milestone
+  → raw structured data
+  → bounded analytical result
+  → agent
+```
+
 ## Design decisions still open
 
 The following product and architecture decisions remain unresolved:
 
 - UI-presentation details for the approval interaction.
-- Minimum context.
 - UI behavior.
-- Boundary between agent and source systems.
+- Boundaries for source systems beyond the approved investigator-visible structured-data boundary.
 
 Acceptance criteria will be finalized after these decisions are resolved and approved.
 
