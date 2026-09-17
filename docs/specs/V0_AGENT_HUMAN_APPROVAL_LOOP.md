@@ -61,11 +61,56 @@ If the human selects **Modify**, the requested modification applies to the propo
 
 The modification does not itself authorize execution. The revised proposal must again contain the five mandatory proposal fields and remains subject to Approve, Modify, or Decline.
 
+## Human decision semantics
+
+### Approve
+
+Approve authorizes the exact proposed next analytical action.
+
+In V0:
+
+- The proposal becomes `APPROVED`.
+- The approval is persisted.
+- No analytical execution occurs.
+- The system must make clear that the action is approved but not executed in V0.
+
+These semantics carry forward into V1, where an approved action may be passed to the controlled analytical executor.
+
+Approval applies only to that specific proposed action and does not authorize later actions in the provisional investigation plan.
+
+### Decline
+
+Decline means that the proposed analytical action is not authorized.
+
+- The proposal becomes `DECLINED`.
+- The decision is persisted.
+- The human may optionally provide a decline reason or instruction.
+- The decline reason becomes part of the investigation history.
+- The agent may use that feedback to reconsider its provisional plan and propose a different next action.
+
+A declined action must not be executed.
+
+Declining an action does not authorize a similar or replacement action. Any replacement action must be presented as a new proposal and reviewed separately.
+
+### Modify
+
+- Modify applies to the current proposed action.
+- The human provides an instruction describing the requested change.
+- The agent produces a revised proposal containing the five mandatory proposal fields.
+- Modification itself does not authorize execution.
+- The revised proposal requires a new Approve, Modify, or Decline decision.
+
+### Decision history
+
+Human decisions are immutable historical events. The system must preserve what decision was made on a proposal rather than silently rewriting that historical decision later.
+
+If the investigator subsequently changes direction, that change must be represented by a subsequent proposal or decision event rather than altering the earlier historical record.
+
 ## Design decisions still open
 
 The following product and architecture decisions remain unresolved:
 
-- Approval interaction details.
+- UI-presentation details for the approval interaction.
 - Persistence representation.
 - Minimum context.
 - UI behavior.
