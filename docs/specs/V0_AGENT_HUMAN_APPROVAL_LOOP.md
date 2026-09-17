@@ -41,13 +41,31 @@ Approval authorizes only the proposed next action. It does not authorize later s
 
 After an action result becomes available, or after human modification or decline, the agent may reassess its hypotheses and provisional plan before proposing the next action.
 
-## Open decisions
+## Next analytical action proposal
+
+At each investigation cycle, the agent presents exactly one next analytical action for human review.
+
+Before the human can approve, modify, or decline the action, the proposal must contain these five mandatory fields:
+
+1. **Action** — a concise description of the analytical action the agent wants performed.
+2. **Purpose** — the investigation question or hypothesis the action is intended to examine.
+3. **Why now** — why the agent considers this the appropriate next step given the current investigation context, evidence, findings, hypotheses, and provisional plan.
+4. **Data to be used** — the specific investigator-visible data sources or artifacts the proposed action requires. The proposal must not reference evaluator-only data or other inaccessible sources.
+5. **Expected output** — a description of the analytical result or artifact the action is expected to produce.
+
+The proposal contract describes analytical intent and requested data access. V0 does not require the proposal to expose implementation or execution details such as generated Python, pandas operations, SQL, executor commands, or low-level execution parameters. Those belong to the controlled analytical execution layer introduced after V0.
+
+## Human modification
+
+If the human selects **Modify**, the requested modification applies to the proposed next action. The agent must incorporate the human instruction and produce a revised proposal for review.
+
+The modification does not itself authorize execution. The revised proposal must again contain the five mandatory proposal fields and remains subject to Approve, Modify, or Decline.
+
+## Design decisions still open
 
 The following product and architecture decisions remain unresolved:
 
-- Proposal contract details, except for the provisional-plan and one-next-action approval scope defined above.
 - Approval interaction details.
-- Modification semantics.
 - Persistence representation.
 - Minimum context.
 - UI behavior.
