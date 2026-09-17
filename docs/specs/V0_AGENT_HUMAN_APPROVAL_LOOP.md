@@ -167,14 +167,52 @@ V0 does not yet require persistence of:
 
 These belong to later milestones unless a concrete V0 requirement demonstrates otherwise.
 
-This decision defines what must be persisted, not how it is physically stored. Persistence representation and technology remain open design decisions.
+This decision defines what must be persisted; the V0 persistence representation is defined below.
+
+## V0 persistence representation
+
+V0 uses SQLite for local persistence.
+
+### Requirements
+
+- SQLite runs locally within the application environment.
+- No external database server or cloud persistence service is required.
+- The database remains inside the local and on-premise boundary.
+- Python's standard SQLite support is sufficient; do not introduce a database dependency unless implementation later demonstrates a concrete need.
+
+### V0 storage scope
+
+The SQLite persistence model stores only the V0 records already approved in this specification:
+
+- Investigations.
+- Proposals.
+- Human decisions.
+
+Do not introduce persistence structures for future milestones, including hypotheses, findings, analytical results, institutional knowledge, general agent memory, chat transcripts, or generated analytical code.
+
+### Persistence boundary
+
+Application and agent logic should interact with persistence through a small persistence abstraction or layer rather than issuing arbitrary SQLite operations throughout the application.
+
+SQLite is the V0 persistence implementation behind that boundary. This preserves the ability to change persistence implementation later without making SQLite itself part of the investigation-agent contract.
+
+### History
+
+The SQLite representation must preserve the already-approved immutable historical semantics:
+
+- Proposals are retained rather than overwritten.
+- Decisions are retained rather than overwritten.
+- Revised proposals are new records.
+- Proposal revision lineage is preserved.
+- An investigation can be reconstructed after application restart without chat history or LLM memory.
+
+This decision selects the V0 persistence implementation only. It does not design the future V1 or V2 persistence model.
 
 ## Design decisions still open
 
 The following product and architecture decisions remain unresolved:
 
 - UI-presentation details for the approval interaction.
-- Persistence representation or technology.
 - Minimum context.
 - UI behavior.
 - Boundary between agent and source systems.
