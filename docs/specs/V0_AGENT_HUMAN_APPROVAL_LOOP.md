@@ -106,12 +106,75 @@ Human decisions are immutable historical events. The system must preserve what d
 
 If the investigator subsequently changes direction, that change must be represented by a subsequent proposal or decision event rather than altering the earlier historical record.
 
+## V0 persistence content
+
+V0 must persist enough structured state to reconstruct the complete proposal and decision trail after the application is closed and reopened.
+
+### Investigation record
+
+Persist a minimal investigation record containing:
+
+- Stable investigation ID.
+- Reference to the investigator-visible case or fixture being investigated.
+- Creation timestamp.
+- Last-updated timestamp.
+
+This record provides identity and context for the proposal and decision history. V0 does not require the full investigation-state model planned for later milestones.
+
+### Proposals
+
+Persist every analytical-action proposal. Each proposal must retain:
+
+- Stable proposal ID.
+- All five mandatory proposal fields: Action, Purpose, Why now, Data to be used, and Expected output.
+- Proposal status.
+- Creation timestamp.
+- Lineage to the prior proposal when the proposal is a revision produced through Modify.
+
+Historical proposals must not be overwritten by revised proposals.
+
+### Human decisions
+
+Persist every human review decision. Each decision must retain:
+
+- Stable decision ID.
+- Proposal ID to which the decision applies.
+- Decision type: Approve, Modify, or Decline.
+- Timestamp.
+- Human-provided instruction or reason when applicable.
+
+For Modify, the human modification instruction is retained, the resulting revised proposal is stored as a new proposal, and lineage between the original and revised proposal is preserved.
+
+For Decline, the optional decline reason or instruction is retained when supplied.
+
+### Persistence behavior
+
+After closing and reopening an investigation, the system must be able to reconstruct the ordered proposal and decision history without relying on chat history or LLM memory.
+
+Previously persisted proposals and decisions are immutable historical records. Later actions append new records rather than rewriting earlier history.
+
+### Explicitly not required in V0 persistence
+
+V0 does not yet require persistence of:
+
+- Hypotheses.
+- Findings.
+- Analytical results.
+- Institutional knowledge entries.
+- General agent memory.
+- Full chat transcripts.
+- Generated analytical code.
+
+These belong to later milestones unless a concrete V0 requirement demonstrates otherwise.
+
+This decision defines what must be persisted, not how it is physically stored. Persistence representation and technology remain open design decisions.
+
 ## Design decisions still open
 
 The following product and architecture decisions remain unresolved:
 
 - UI-presentation details for the approval interaction.
-- Persistence representation.
+- Persistence representation or technology.
 - Minimum context.
 - UI behavior.
 - Boundary between agent and source systems.
