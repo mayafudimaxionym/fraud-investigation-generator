@@ -272,15 +272,106 @@ Agent
   → agent
 ```
 
+## V0 user interface
+
+V0 uses a minimal local Streamlit interface. Its purpose is to exercise the approved agent and human approval loop; it is not the final production interface.
+
+V0 uses a single investigation screen rather than multiple application sections or dashboards.
+
+### Main screen
+
+The screen contains three functional areas:
+
+1. Investigation context.
+2. Investigation agent interaction.
+3. Decision history.
+
+### Investigation context
+
+Display the active investigation or case identity and make the investigation request readily visible.
+
+The other investigator-facing contextual artifacts—the customer or support statement and prior analyst note—must be available for inspection without their full contents continuously occupying the main screen. Expandable UI elements are appropriate.
+
+Display the approved safe inventory of investigator-visible structured datasets, including available metadata such as dataset name, row count, and fields or schema where available.
+
+Do not expose evaluator-only information. Do not make browsing raw structured dataset rows part of the V0 agent workflow.
+
+### Investigator instruction
+
+Provide a text input through which the human investigator can give the investigation agent an instruction.
+
+After receiving the instruction, the agent presents its provisional investigation plan and exactly one proposed next analytical action. The provisional plan is informational and does not grant execution authority.
+
+### Proposed next analytical action
+
+Display the already-approved five mandatory proposal fields clearly:
+
+- Action.
+- Purpose.
+- Why now.
+- Data to be used.
+- Expected output.
+
+Provide three human decision controls: Approve, Modify, and Decline.
+
+### Approve interaction
+
+Approve persists the already-defined `APPROVED` decision.
+
+Because V0 does not execute analytical actions, the UI must clearly indicate:
+
+`Approved — analytical execution is not implemented in V0.`
+
+Do not generate or simulate an analytical result.
+
+### Modify interaction
+
+Selecting Modify allows the investigator to provide an instruction describing how the proposed action should change. The agent then produces a new proposal containing all five mandatory fields.
+
+The revised proposal requires a new Approve, Modify, or Decline decision. The original proposal and modification decision remain in immutable history.
+
+### Decline interaction
+
+Selecting Decline allows the investigator to provide an optional reason or instruction. The decline can be submitted without a reason. The `DECLINED` decision is persisted.
+
+The agent may then reconsider its provisional investigation plan and propose a new next action. Any replacement action is a new proposal and requires separate human review.
+
+### Decision history
+
+The screen displays the persisted proposal and decision trail sufficiently to show what occurred during the V0 interaction. The history should make proposal revisions and their decisions understandable, including Modify lineage.
+
+Do not build a sophisticated audit or history interface in V0.
+
+### Explicit V0 UI exclusions
+
+Do not add:
+
+- Dashboards.
+- Graph visualization.
+- Knowledge-base views.
+- Multiple-agent interfaces.
+- Analytical-result views.
+- Raw CSV browsing as part of the agent workflow.
+- Notebook or code-execution interfaces.
+- Production navigation architecture.
+- Enterprise authentication.
+- Final-product visual design.
+
+Keep the UI deliberately minimal.
+
+## V0 source-system boundary
+
+For V0, the frozen investigator package is the investigation source.
+
+Do not design or implement integrations for email, external PDF ingestion, Excel, databases, VS Code, Google Colab, or external enterprise systems. Those are future integration concerns and do not block V0.
+
+The previously approved investigator-visible structured-data boundary remains authoritative.
+
 ## Design decisions still open
 
-The following product and architecture decisions remain unresolved:
+No further V0 product or architecture design decisions remain open.
 
-- UI-presentation details for the approval interaction.
-- UI behavior.
-- Boundaries for source systems beyond the approved investigator-visible structured-data boundary.
-
-Acceptance criteria will be finalized after these decisions are resolved and approved.
+The V0 acceptance criteria are defined by the approved requirements in this specification.
 
 ## Out of scope
 
