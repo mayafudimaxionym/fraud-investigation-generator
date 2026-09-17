@@ -11,6 +11,14 @@ Synthetic-case fixture complete and frozen for the current agent-driven investig
 - Any proposed implementation that conflicts with an invariant or materially changes the architecture must be identified explicitly and approved before implementation.
 - The synthetic investigation package is frozen test infrastructure and should not be expanded unless framework testing exposes a concrete requirement.
 
+## Development governance
+
+- `AGENTS.md` provides standing AI-development instructions.
+- `ROADMAP.md` is the authoritative milestone and sequencing reference.
+- `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the current V0 milestone specification and is **DESIGN IN PROGRESS**.
+- V0 implementation must not resolve its open product decisions through convenient defaults; those decisions require Product & Architecture planning and approval.
+- `docs/ARCHITECTURE.md` remains the architecture baseline, and the synthetic-case fixture remains frozen unless framework testing identifies a concrete requirement.
+
 ## Completed
 
 - Git is initialized, linked to GitHub, and the current commits are pushed.
