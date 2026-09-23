@@ -7,8 +7,7 @@ name = "fraud-investigation-generator"
 version = "0.1.0"
 description = "Local synthetic fraud investigation dataset generator"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["streamlit"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
