@@ -11,13 +11,15 @@ Build an on-premises agent-driven fraud investigation framework with human contr
 
 ## Current milestone
 
-### V0 — Agent / Human Approval Loop
+### V0 — Agent / Human Approval Loop — IMPLEMENTED / ACCEPTANCE VERIFIED
 
 **Goal:**
 
 `Investigator package → local investigation agent → structured analytical proposal → human approve / modify / decline → persisted decision`
 
 V0 does not execute proposed analysis.
+
+Formal local acceptance verified governed case loading, local proposal generation, persisted Approve / Modify / Decline decisions, Modify revision lineage, SQLite restart reconstruction, no analytical execution, and evaluator isolation.
 
 **Exit criteria:**
 

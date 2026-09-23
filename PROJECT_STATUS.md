@@ -2,7 +2,7 @@
 
 ## Current stage
 
-Synthetic-case fixture complete and frozen for the current agent-driven investigation-framework test. The project provides deterministic canonical generation, a separated investigator package, evaluator-only truth material, and bounded artifact generation while Python retains all canonical truth and validation ownership.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. The frozen synthetic-case fixture remains the governed investigation source; V0 adds a local Streamlit approval interface, local SQLite persistence, and a local Ollama proposal agent without analytical execution.
 
 ## Architecture baseline
 
@@ -15,13 +15,19 @@ Synthetic-case fixture complete and frozen for the current agent-driven investig
 
 - `AGENTS.md` provides standing AI-development instructions.
 - `ROADMAP.md` is the authoritative milestone and sequencing reference.
-- `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the current V0 milestone specification and is **DESIGN IN PROGRESS**.
-- V0 implementation must not resolve its open product decisions through convenient defaults; those decisions require Product & Architecture planning and approval.
+- `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the approved V0 milestone specification; its implementation and formal acceptance are complete.
+- V0 product and architecture decisions are implemented as specified. Future milestones still require separate planning and approval.
 - `docs/ARCHITECTURE.md` remains the architecture baseline, and the synthetic-case fixture remains frozen unless framework testing identifies a concrete requirement.
 
 ## Completed
 
 - Git is initialized, linked to GitHub, and the current commits are pushed.
+- **V0 Agent / Human Approval Loop — IMPLEMENTED / ACCEPTANCE VERIFIED.** Tasks 1–6 delivered minimal V0 domain contracts, local SQLite persistence, governed investigator-package access, a local proposal agent, approval-loop orchestration, and a local Streamlit UI. Task 7 formal local acceptance verified all eight V0 acceptance criteria.
+- V0 runs with local Streamlit, local SQLite, and local Ollama (`llama3:8b`). It loads only governed investigator-package context and safe dataset inventory metadata; evaluator-only material, private truth, and raw structured rows remain outside the agent boundary.
+- The local proposal agent returns one structured five-field next-action proposal and a provisional plan. Approve, Modify, and Decline are persisted; Modify retains the original proposal and decision while creating a lineage-preserving revised proposal.
+- SQLite restart reconstruction of proposal/decision history and Modify lineage is verified without chat history or LLM memory. Analytical execution, analytical results, and raw-data querying are intentionally not implemented in V0.
+- Formal acceptance and final automated verification passed **150 tests, 1 skipped**. The skip is the Windows physical-symlink environment limitation; direct path-escape protection remains tested.
+- A Streamlit/SQLite thread-affinity lifecycle defect found during acceptance was corrected and verified: each Streamlit execution creates and closes its own SQLite-backed approval service, avoiding reuse of a thread-affine connection.
 - A minimal dependency-free Python project foundation exists.
 - Deterministic sub-seed derivation and reproducibility metadata are defined.
 - The canonical world includes entities, relationships, events, signals, private fraud campaigns, and the `CanonicalWorld` aggregate.
@@ -48,17 +54,17 @@ Synthetic-case fixture complete and frozen for the current agent-driven investig
 
 ## Current uncommitted work
 
-No uncommitted implementation work.
+- The verified Streamlit/SQLite connection-lifecycle correction in `investigation/app.py` and its regression coverage in `tests/test_streamlit_app.py` await commit.
+- This V0 status/roadmap synchronization awaits review and commit.
 
 ## Current blockers
 
-- Python is unavailable on this agent shell's `PATH`, so the suite cannot be executed here. The accepted user-run local suite passed 81/81.
 - Factual customer, support, and operational artifacts are structured and grounded, but are not yet realistic human documents. This remains a future concern and is intentionally outside the frozen synthetic-case fixture.
-- Git whitespace checks have passed for the implemented changes.
+- `python -m pip install -e .` has a known pre-existing setuptools flat-layout package-discovery tooling issue. It is not a V0 functional failure and did not prevent local runtime acceptance.
 
 ## Next approved step
 
-No further synthetic-case work is approved. The fixture is frozen for the current investigation-framework test; the next program phase is the main agent-driven investigation framework.
+No further synthetic-case work is approved. The fixture is frozen. V1 — Controlled execution has not started and requires separate planning and approval.
 
 ## Architectural constraints
 

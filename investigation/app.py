@@ -35,10 +35,10 @@ def optional_decline_reason(value: str) -> str | None:
     return value if value.strip() else None
 
 
-def _build_service() -> ApprovalLoopService:
+def _build_service() -> tuple[ApprovalLoopService, SQLiteInvestigationStore]:
     store = SQLiteInvestigationStore(DATABASE_PATH)
     client = OllamaProposalClient(OllamaConfig.from_environment())
-    return ApprovalLoopService(store, LocalProposalAgent(client))
+    return ApprovalLoopService(store, LocalProposalAgent(client)), store
 
 
 def _render_context(st: object, context: InvestigatorPackageContext) -> None:
@@ -100,12 +100,15 @@ def main() -> None:
 
     st.set_page_config(page_title="V0 Fraud Investigation", layout="wide")
     st.title("V0 Fraud Investigation Approval Loop")
+    approval_service, store = _build_service()
+    try:
+        _render_screen(st, approval_service)
+    finally:
+        store.close()
 
-    @st.cache_resource
-    def service() -> ApprovalLoopService:
-        return _build_service()
 
-    approval_service = service()
+def _render_screen(st: object, approval_service: ApprovalLoopService) -> None:
+    """Render one Streamlit execution using its own local SQLite connection."""
     defaults = {
         "active_investigation_id": None,
         "active_package_directory": "",

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from investigation.app import optional_decline_reason, select_active_proposal
+from investigation.app import _build_service, optional_decline_reason, select_active_proposal
 from investigation.models import AnalyticalActionProposal
 
 
@@ -46,6 +46,21 @@ def test_optional_decline_reason_converts_blank_input_to_none() -> None:
     assert optional_decline_reason("") is None
     assert optional_decline_reason("   ") is None
     assert optional_decline_reason("Use another source first.") == "Use another source first."
+
+
+def test_service_factory_creates_a_fresh_store_for_each_ui_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("investigation.app.DATABASE_PATH", tmp_path / "investigations.sqlite")
+
+    first_service, first_store = _build_service()
+    second_service, second_store = _build_service()
+    try:
+        assert first_service is not second_service
+        assert first_store is not second_store
+    finally:
+        first_store.close()
+        second_store.close()
 
 
 def test_initial_streamlit_screen_renders_without_invoking_ollama(
