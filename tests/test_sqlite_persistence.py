@@ -156,6 +156,42 @@ def test_store_rejects_proposals_without_a_persisted_investigation(tmp_path: Pat
             raise AssertionError("proposals require a persisted investigation")
 
 
+def test_initial_investigation_and_proposal_write_rolls_back_on_proposal_failure(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "investigations.sqlite"
+    target_investigation = _investigation()
+    duplicate_proposal = _proposal("proposal-duplicate")
+    target_proposal = _proposal("proposal-duplicate")
+    existing_investigation = InvestigationRecord(
+        "investigation-existing",
+        "other-case",
+        BASE_TIME,
+        BASE_TIME,
+    )
+
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(existing_investigation)
+        store.add_proposal(existing_investigation.investigation_id, duplicate_proposal)
+
+        try:
+            store.add_investigation_with_initial_proposal(
+                target_investigation, target_proposal
+            )
+        except ValueError as error:
+            assert "integrity" in str(error)
+        else:
+            raise AssertionError("duplicate initial proposal IDs must fail inside the transaction")
+
+        try:
+            store.get_investigation(target_investigation.investigation_id)
+        except ValueError as error:
+            assert "does not exist" in str(error)
+        else:
+            raise AssertionError("investigation insertion must roll back with proposal failure")
+        assert store.list_proposals(target_investigation.investigation_id) == ()
+
+
 def test_final_decision_writes_roll_back_when_decision_insert_fails(tmp_path: Path) -> None:
     for decision_type in ("APPROVE", "DECLINE"):
         database_path = tmp_path / f"{decision_type.lower()}.sqlite"

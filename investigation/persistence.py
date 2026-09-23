@@ -42,19 +42,24 @@ class SQLiteInvestigationStore:
         self._connection.close()
 
     def add_investigation(self, investigation: InvestigationRecord) -> None:
-        self._execute(
-            """
-            INSERT INTO investigations (
-                investigation_id, case_reference, created_at, updated_at
-            ) VALUES (?, ?, ?, ?)
-            """,
-            (
-                investigation.investigation_id,
-                investigation.case_reference,
-                _serialize_timestamp(investigation.created_at),
-                _serialize_timestamp(investigation.updated_at),
-            ),
-        )
+        try:
+            with self._connection:
+                self._insert_investigation(investigation)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+
+    def add_investigation_with_initial_proposal(
+        self,
+        investigation: InvestigationRecord,
+        proposal: AnalyticalActionProposal,
+    ) -> None:
+        """Atomically persist one investigation and its initial proposed action."""
+        try:
+            with self._connection:
+                self._insert_investigation(investigation)
+                self._insert_proposal(investigation.investigation_id, proposal)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
 
     def get_investigation(self, investigation_id: str) -> InvestigationRecord:
         row = self._connection.execute(
@@ -134,6 +139,21 @@ class SQLiteInvestigationStore:
                 proposal.status,
                 _serialize_timestamp(proposal.created_at),
                 proposal.revised_from_proposal_id,
+            ),
+        )
+
+    def _insert_investigation(self, investigation: InvestigationRecord) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO investigations (
+                investigation_id, case_reference, created_at, updated_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                investigation.investigation_id,
+                investigation.case_reference,
+                _serialize_timestamp(investigation.created_at),
+                _serialize_timestamp(investigation.updated_at),
             ),
         )
 
