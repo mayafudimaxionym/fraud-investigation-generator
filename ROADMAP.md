@@ -37,7 +37,7 @@ Formal local acceptance verified governed case loading, local proposal generatio
 
 ### V0.5 — Investigator-Ready Investigation Loop — PRODUCT DESIGN APPROVED / ARCHITECTURE APPROVED / IMPLEMENTATION IN PROGRESS
 
-V0.5 improves the investigator-ready experience while preserving V0's governed local loop. Its foundational `InvestigationDirection` domain contracts, SQLite schema/persistence foundation, and safe configured case-catalog work are implemented locally; orchestration, model/preflight, lifecycle, and investigator UI work remain future V0.5 tasks. It does not authorize analytical execution.
+V0.5 improves the investigator-ready experience while preserving V0's governed local loop. Its foundational `InvestigationDirection` domain contracts, SQLite schema/persistence foundation, safe configured case catalog, and direction-aware proposal-agent/model boundary are implemented locally; lifecycle/orchestration and investigator UI work remain future V0.5 tasks. It does not authorize analytical execution.
 
 ## Next milestones
 
