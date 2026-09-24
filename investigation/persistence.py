@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
 from investigation.models import (
+    AGENT_OPERATION_STATUSES,
+    AGENT_OPERATION_TYPES,
     DECISION_TYPES,
     PROPOSAL_STATUSES,
+    AgentOperation,
     AnalyticalActionProposal,
     HumanDecision,
     InvestigationDirection,
     InvestigationRecord,
     apply_human_decision,
+    transition_agent_operation,
 )
 
 
@@ -24,7 +28,7 @@ _DECISION_STATUS = {
     "DECLINE": "DECLINED",
     "MODIFY": "MODIFIED",
 }
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,159 @@ class SQLiteInvestigationStore:
                 self._insert_proposal(investigation.investigation_id, proposal)
         except sqlite3.IntegrityError as error:
             raise ValueError("persistence integrity constraint failed") from error
+
+    def add_investigation_with_pending_start_operation(
+        self, investigation: InvestigationRecord, operation: AgentOperation
+    ) -> None:
+        """Atomically persist an investigation and its initial pending START operation."""
+        if operation.investigation_id != investigation.investigation_id:
+            raise ValueError("START operation must belong to the investigation")
+        if operation.operation_type != "START":
+            raise ValueError("initial operation must have START type")
+        try:
+            with self._connection:
+                self._insert_investigation(investigation)
+                self._insert_pending_operation(operation)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+
+    def persist_modify_with_pending_operation(
+        self,
+        proposal: AnalyticalActionProposal,
+        decision: HumanDecision,
+        operation: AgentOperation,
+    ) -> AnalyticalActionProposal:
+        """Atomically persist the authoritative Modify decision and pending dispatch."""
+        if decision.decision_type != "MODIFY":
+            raise ValueError("pending Modify operation requires a MODIFY decision")
+        if proposal.status != "PROPOSED" or decision.proposal_id != proposal.proposal_id:
+            raise ValueError("stored proposal must match the PROPOSED proposal")
+        modified = replace(proposal, status="MODIFIED")
+        self._require_operation_trigger(operation, proposal, decision, "MODIFY")
+        try:
+            with self._connection:
+                stored = _proposal_from_row(self._proposal_row(proposal.proposal_id))
+                if stored != proposal:
+                    raise ValueError("stored proposal must match the PROPOSED proposal")
+                self._connection.execute(
+                    "UPDATE proposals SET status = ? WHERE proposal_id = ?",
+                    (modified.status, proposal.proposal_id),
+                )
+                self._insert_decision(decision)
+                self._insert_pending_operation(operation)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+        return modified
+
+    def persist_decline_with_pending_operation(
+        self,
+        proposal: AnalyticalActionProposal,
+        decision: HumanDecision,
+        operation: AgentOperation,
+    ) -> AnalyticalActionProposal:
+        """Atomically persist the authoritative Decline decision and pending dispatch."""
+        (declined,) = apply_human_decision(proposal, decision)
+        if decision.decision_type != "DECLINE":
+            raise ValueError("pending Decline operation requires a DECLINE decision")
+        if operation.operation_type not in ("DECLINE_REDIRECT", "DECLINE_RECONSIDER"):
+            raise ValueError("pending Decline operation has an invalid type")
+        self._require_operation_trigger(operation, proposal, decision, operation.operation_type)
+        try:
+            with self._connection:
+                stored = _proposal_from_row(self._proposal_row(proposal.proposal_id))
+                if stored != proposal:
+                    raise ValueError("stored proposal must match the PROPOSED proposal")
+                self._connection.execute(
+                    "UPDATE proposals SET status = ? WHERE proposal_id = ?",
+                    (declined.status, proposal.proposal_id),
+                )
+                self._insert_decision(decision)
+                self._insert_pending_operation(operation)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+        return declined
+
+    def add_pending_operation(self, operation: AgentOperation) -> None:
+        """Persist one new pending operation without creating any human decision."""
+        try:
+            with self._connection:
+                self._insert_pending_operation(operation)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+
+    def get_agent_operation(self, operation_id: str) -> AgentOperation:
+        row = self._connection.execute(
+            "SELECT * FROM agent_operations WHERE operation_id = ?", (operation_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("agent operation does not exist")
+        return _agent_operation_from_row(row)
+
+    def list_agent_operations(self, investigation_id: str) -> tuple[AgentOperation, ...]:
+        rows = self._connection.execute(
+            "SELECT * FROM agent_operations WHERE investigation_id = ? "
+            "ORDER BY created_at, operation_id",
+            (investigation_id,),
+        ).fetchall()
+        return tuple(_agent_operation_from_row(row) for row in rows)
+
+    def claim_pending_operation(
+        self, operation_id: str, runner_instance_id: str, updated_at: datetime
+    ) -> bool:
+        """Atomically claim one pending operation; exactly one caller can succeed."""
+        candidate = self.get_agent_operation(operation_id)
+        if candidate.status != "PENDING_RENDER":
+            return False
+        claimed = transition_agent_operation(
+            candidate, "RUNNING", updated_at, runner_instance_id=runner_instance_id
+        )
+        with self._connection:
+            cursor = self._connection.execute(
+                "UPDATE agent_operations SET status = ?, updated_at = ?, runner_instance_id = ? "
+                "WHERE operation_id = ? AND status = 'PENDING_RENDER'",
+                (
+                    claimed.status,
+                    _serialize_timestamp(claimed.updated_at),
+                    claimed.runner_instance_id,
+                    operation_id,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def mark_operation_failed(
+        self, operation_id: str, runner_instance_id: str, updated_at: datetime
+    ) -> AgentOperation:
+        return self._transition_claimed_operation(
+            operation_id, "FAILED", runner_instance_id, updated_at
+        )
+
+    def mark_operation_interrupted(
+        self, operation_id: str, runner_instance_id: str, updated_at: datetime
+    ) -> AgentOperation:
+        return self._transition_claimed_operation(
+            operation_id, "INTERRUPTED", runner_instance_id, updated_at
+        )
+
+    def interrupt_operations_from_previous_process(
+        self, runner_instance_id: str, updated_at: datetime
+    ) -> tuple[AgentOperation, ...]:
+        """Mark persisted work from another process interrupted without redispatching it."""
+        if not isinstance(runner_instance_id, str) or not runner_instance_id.strip():
+            raise ValueError("runner_instance_id must be non-empty")
+        with self._connection:
+            rows = self._connection.execute(
+                "SELECT * FROM agent_operations WHERE status = 'RUNNING' "
+                "AND runner_instance_id IS NOT NULL AND runner_instance_id != ?",
+                (runner_instance_id,),
+            ).fetchall()
+            operation_ids = tuple(row["operation_id"] for row in rows)
+            self._connection.execute(
+                "UPDATE agent_operations SET status = 'INTERRUPTED', updated_at = ? "
+                "WHERE status = 'RUNNING' AND runner_instance_id IS NOT NULL "
+                "AND runner_instance_id != ?",
+                (_serialize_timestamp(updated_at), runner_instance_id),
+            )
+        return tuple(self.get_agent_operation(operation_id) for operation_id in operation_ids)
 
     def get_investigation(self, investigation_id: str) -> InvestigationRecord:
         row = self._connection.execute(
@@ -306,6 +463,215 @@ class SQLiteInvestigationStore:
             raise ValueError("persistence integrity constraint failed") from error
 
         return transitioned_proposals
+
+    def complete_start_operation(
+        self,
+        operation_id: str,
+        runner_instance_id: str,
+        direction: InvestigationDirection,
+        proposal: AnalyticalActionProposal,
+        updated_at: datetime,
+    ) -> None:
+        """Atomically persist initial generated state and complete a claimed START."""
+        try:
+            with self._connection:
+                operation = self._require_running_operation(operation_id, runner_instance_id, "START")
+                if direction.investigation_id != operation.investigation_id or direction.version != 1:
+                    raise ValueError("initial direction must be version 1 for the operation investigation")
+                self._insert_direction(direction)
+                self._insert_proposal(operation.investigation_id, proposal)
+                self._complete_operation(operation, updated_at)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+
+    def complete_modify_operation(
+        self,
+        operation_id: str,
+        runner_instance_id: str,
+        revised_proposal: AnalyticalActionProposal,
+        direction: InvestigationDirection | None,
+        updated_at: datetime,
+    ) -> None:
+        """Atomically persist a Modify result and complete its claimed operation."""
+        try:
+            with self._connection:
+                operation = self._require_running_operation(operation_id, runner_instance_id, "MODIFY")
+                if revised_proposal.revised_from_proposal_id != operation.triggering_proposal_id:
+                    raise ValueError("revised proposal must preserve the triggering proposal lineage")
+                if direction is not None:
+                    if direction.investigation_id != operation.investigation_id:
+                        raise ValueError("direction must belong to the operation investigation")
+                    self._require_next_direction_version(direction)
+                    self._insert_direction(direction)
+                self._insert_proposal(operation.investigation_id, revised_proposal)
+                self._complete_operation(operation, updated_at)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+
+    def complete_decline_reconsideration_operation(
+        self,
+        operation_id: str,
+        runner_instance_id: str,
+        replacement_proposal: AnalyticalActionProposal,
+        direction: InvestigationDirection | None,
+        result: DeclineReconsiderationResult,
+        updated_at: datetime,
+    ) -> None:
+        """Atomically persist an independent decline result and complete its operation."""
+        try:
+            with self._connection:
+                operation = self.get_agent_operation(operation_id)
+                if operation.operation_type not in ("DECLINE_REDIRECT", "DECLINE_RECONSIDER"):
+                    raise ValueError("operation must be a decline reconsideration")
+                operation = self._require_running_operation(
+                    operation_id, runner_instance_id, operation.operation_type
+                )
+                if result.decline_decision_id != operation.triggering_decision_id:
+                    raise ValueError("result must reference the triggering Decline decision")
+                if direction is not None:
+                    if direction.investigation_id != operation.investigation_id:
+                        raise ValueError("direction must belong to the operation investigation")
+                    self._require_next_direction_version(direction)
+                    self._insert_direction(direction)
+                self._insert_proposal(operation.investigation_id, replacement_proposal)
+                self._insert_decline_reconsideration_result(result, operation.investigation_id)
+                self._complete_operation(operation, updated_at)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+
+    def _transition_claimed_operation(
+        self,
+        operation_id: str,
+        status: str,
+        runner_instance_id: str,
+        updated_at: datetime,
+    ) -> AgentOperation:
+        with self._connection:
+            operation = self._require_running_operation(operation_id, runner_instance_id)
+            transitioned = transition_agent_operation(
+                operation, status, updated_at, runner_instance_id=runner_instance_id
+            )
+            self._connection.execute(
+                "UPDATE agent_operations SET status = ?, updated_at = ? WHERE operation_id = ? "
+                "AND status = 'RUNNING' AND runner_instance_id = ?",
+                (
+                    transitioned.status,
+                    _serialize_timestamp(transitioned.updated_at),
+                    operation_id,
+                    runner_instance_id,
+                ),
+            )
+        return transitioned
+
+    def _require_running_operation(
+        self,
+        operation_id: str,
+        runner_instance_id: str,
+        operation_type: str | None = None,
+    ) -> AgentOperation:
+        operation = self.get_agent_operation(operation_id)
+        if operation.status != "RUNNING":
+            raise ValueError("operation must be RUNNING")
+        if operation.runner_instance_id != runner_instance_id:
+            raise ValueError("operation belongs to a different runner instance")
+        if operation_type is not None and operation.operation_type != operation_type:
+            raise ValueError("operation type does not match completion")
+        return operation
+
+    def _complete_operation(self, operation: AgentOperation, updated_at: datetime) -> None:
+        completed = transition_agent_operation(
+            operation,
+            "COMPLETED",
+            updated_at,
+            runner_instance_id=operation.runner_instance_id,
+        )
+        self._connection.execute(
+            "UPDATE agent_operations SET status = ?, updated_at = ? WHERE operation_id = ? "
+            "AND status = 'RUNNING' AND runner_instance_id = ?",
+            (
+                completed.status,
+                _serialize_timestamp(completed.updated_at),
+                completed.operation_id,
+                completed.runner_instance_id,
+            ),
+        )
+
+    def _require_operation_trigger(
+        self,
+        operation: AgentOperation,
+        proposal: AnalyticalActionProposal,
+        decision: HumanDecision,
+        operation_type: str,
+    ) -> None:
+        if operation.operation_type != operation_type:
+            raise ValueError("operation type does not match the human transition")
+        if operation.investigation_id != self._proposal_row(proposal.proposal_id)["investigation_id"]:
+            raise ValueError("operation must belong to the proposal investigation")
+        if operation.triggering_proposal_id != proposal.proposal_id:
+            raise ValueError("operation must reference the triggering proposal")
+        if operation.triggering_decision_id != decision.decision_id:
+            raise ValueError("operation must reference the triggering decision")
+
+    def _insert_pending_operation(self, operation: AgentOperation) -> None:
+        if operation.status != "PENDING_RENDER":
+            raise ValueError("new operations must have PENDING_RENDER status")
+        self._validate_operation_references(operation)
+        self._connection.execute(
+            """
+            INSERT INTO agent_operations (
+                operation_id, investigation_id, operation_type, status, created_at, updated_at,
+                triggering_proposal_id, triggering_decision_id, prior_attempt_operation_id,
+                runner_instance_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                operation.operation_id,
+                operation.investigation_id,
+                operation.operation_type,
+                operation.status,
+                _serialize_timestamp(operation.created_at),
+                _serialize_timestamp(operation.updated_at),
+                operation.triggering_proposal_id,
+                operation.triggering_decision_id,
+                operation.prior_attempt_operation_id,
+                operation.runner_instance_id,
+            ),
+        )
+
+    def _validate_operation_references(self, operation: AgentOperation) -> None:
+        self.get_investigation(operation.investigation_id)
+        if operation.triggering_proposal_id is not None:
+            proposal = self._proposal_row(operation.triggering_proposal_id)
+            if proposal["investigation_id"] != operation.investigation_id:
+                raise ValueError("operation proposal must belong to its investigation")
+        if operation.triggering_decision_id is not None:
+            decision = self._connection.execute(
+                "SELECT * FROM decisions WHERE decision_id = ?", (operation.triggering_decision_id,)
+            ).fetchone()
+            if decision is None:
+                raise ValueError("operation decision does not exist")
+            if decision["proposal_id"] != operation.triggering_proposal_id:
+                raise ValueError("operation decision must belong to its triggering proposal")
+            expected_decision_type = (
+                "MODIFY"
+                if operation.operation_type == "MODIFY"
+                else "DECLINE"
+            )
+            if decision["decision_type"] != expected_decision_type:
+                raise ValueError("operation type must match its triggering decision")
+        if operation.prior_attempt_operation_id is not None:
+            prior = self.get_agent_operation(operation.prior_attempt_operation_id)
+            if prior.investigation_id != operation.investigation_id:
+                raise ValueError("prior attempt must belong to the same investigation")
+            if prior.operation_type != operation.operation_type:
+                raise ValueError("prior attempt must have the same operation type")
+            if prior.status not in ("FAILED", "INTERRUPTED"):
+                raise ValueError("prior attempt must be FAILED or INTERRUPTED")
+            if (
+                prior.triggering_proposal_id != operation.triggering_proposal_id
+                or prior.triggering_decision_id != operation.triggering_decision_id
+            ):
+                raise ValueError("prior attempt must have the same triggering references")
 
     def _insert_proposal(
         self, investigation_id: str, proposal: AnalyticalActionProposal
@@ -569,6 +935,7 @@ class SQLiteInvestigationStore:
                 )
             self._ensure_direction_schema()
             self._ensure_decline_reconsideration_schema()
+            self._ensure_agent_operation_schema()
             self._connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
     def _ensure_direction_schema(self) -> None:
@@ -664,6 +1031,63 @@ class SQLiteInvestigationStore:
         } <= foreign_keys:
             raise ValueError("decline reconsideration results schema is incomplete")
 
+    def _ensure_agent_operation_schema(self) -> None:
+        columns = self._table_columns("agent_operations")
+        if not columns:
+            self._connection.execute(
+                f"""
+                CREATE TABLE agent_operations (
+                    operation_id TEXT PRIMARY KEY,
+                    investigation_id TEXT NOT NULL,
+                    operation_type TEXT NOT NULL CHECK (operation_type IN {AGENT_OPERATION_TYPES!r}),
+                    status TEXT NOT NULL CHECK (status IN {AGENT_OPERATION_STATUSES!r}),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    triggering_proposal_id TEXT,
+                    triggering_decision_id TEXT,
+                    prior_attempt_operation_id TEXT,
+                    runner_instance_id TEXT,
+                    FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id),
+                    FOREIGN KEY (triggering_proposal_id) REFERENCES proposals(proposal_id),
+                    FOREIGN KEY (triggering_decision_id) REFERENCES decisions(decision_id),
+                    FOREIGN KEY (prior_attempt_operation_id) REFERENCES agent_operations(operation_id),
+                    CHECK (
+                        (operation_type = 'START'
+                         AND triggering_proposal_id IS NULL
+                         AND triggering_decision_id IS NULL)
+                        OR (operation_type != 'START'
+                            AND triggering_proposal_id IS NOT NULL
+                            AND triggering_decision_id IS NOT NULL)
+                    ),
+                    CHECK (status != 'PENDING_RENDER' OR runner_instance_id IS NULL),
+                    CHECK (status != 'RUNNING' OR runner_instance_id IS NOT NULL)
+                )
+                """
+            )
+            self._connection.execute(
+                "CREATE INDEX agent_operations_by_investigation_status "
+                "ON agent_operations (investigation_id, status, created_at, operation_id)"
+            )
+            return
+        required = {
+            "operation_id", "investigation_id", "operation_type", "status",
+            "created_at", "updated_at", "triggering_proposal_id",
+            "triggering_decision_id", "prior_attempt_operation_id", "runner_instance_id",
+        }
+        if not required <= columns:
+            raise ValueError("agent operations schema is incomplete")
+        foreign_keys = {
+            (row["from"], row["table"], row["to"])
+            for row in self._connection.execute("PRAGMA foreign_key_list(agent_operations)")
+        }
+        if not {
+            ("investigation_id", "investigations", "investigation_id"),
+            ("triggering_proposal_id", "proposals", "proposal_id"),
+            ("triggering_decision_id", "decisions", "decision_id"),
+            ("prior_attempt_operation_id", "agent_operations", "operation_id"),
+        } <= foreign_keys:
+            raise ValueError("agent operations schema is incomplete")
+
     def _table_columns(self, table_name: str) -> set[str]:
         return {
             row["name"]
@@ -724,4 +1148,19 @@ def _direction_from_row(row: sqlite3.Row) -> InvestigationDirection:
         _deserialize_timestamp(row["created_at"]),
         row["provenance"],
         row["trigger_reference_id"],
+    )
+
+
+def _agent_operation_from_row(row: sqlite3.Row) -> AgentOperation:
+    return AgentOperation(
+        row["operation_id"],
+        row["investigation_id"],
+        row["operation_type"],
+        row["status"],
+        _deserialize_timestamp(row["created_at"]),
+        _deserialize_timestamp(row["updated_at"]),
+        row["triggering_proposal_id"],
+        row["triggering_decision_id"],
+        row["prior_attempt_operation_id"],
+        row["runner_instance_id"],
     )

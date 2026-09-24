@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from investigation.models import (
+    AgentOperation,
     AnalyticalActionProposal,
     HumanDecision,
     InvestigationDirection,
@@ -156,6 +157,32 @@ def _decision(
     )
 
 
+def _operation(
+    operation_id: str = "operation-001",
+    *,
+    investigation_id: str = "investigation-001",
+    operation_type: str = "START",
+    status: str = "PENDING_RENDER",
+    triggering_proposal_id: str | None = None,
+    triggering_decision_id: str | None = None,
+    prior_attempt_operation_id: str | None = None,
+    runner_instance_id: str | None = None,
+    updated_at: datetime = BASE_TIME,
+) -> AgentOperation:
+    return AgentOperation(
+        operation_id,
+        investigation_id,
+        operation_type,
+        status,
+        BASE_TIME,
+        updated_at,
+        triggering_proposal_id,
+        triggering_decision_id,
+        prior_attempt_operation_id,
+        runner_instance_id,
+    )
+
+
 def test_store_reloads_investigation_across_a_restart(tmp_path: Path) -> None:
     database_path = tmp_path / "investigations.sqlite"
     investigation = _investigation()
@@ -184,6 +211,9 @@ def test_fresh_database_creates_v05_schema(tmp_path: Path) -> None:
         result_table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'decline_reconsideration_results'"
         ).fetchone()
+        operation_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_operations'"
+        ).fetchone()
         schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
     finally:
         connection.close()
@@ -191,7 +221,8 @@ def test_fresh_database_creates_v05_schema(tmp_path: Path) -> None:
     assert {"objective", "package_association"} <= columns
     assert direction_table is not None
     assert result_table is not None
-    assert schema_version == 2
+    assert operation_table is not None
+    assert schema_version == 3
 
 
 def test_v0_schema_migrates_idempotently_without_losing_history(tmp_path: Path) -> None:
@@ -288,12 +319,12 @@ def test_v0_schema_migrates_idempotently_without_losing_history(tmp_path: Path) 
         )
         assert migrated.list_decisions(legacy.investigation_id) == (decision,)
         assert migrated.get_current_direction(legacy.investigation_id) is None
-    assert _schema_version(database_path) == 2
+    assert _schema_version(database_path) == 3
 
     with SQLiteInvestigationStore(database_path) as reopened:
         assert reopened.get_investigation(legacy.investigation_id) == legacy
         assert reopened.list_proposals(legacy.investigation_id)[1] == revised
-    assert _schema_version(database_path) == 2
+    assert _schema_version(database_path) == 3
 
 
 def test_misleading_current_user_version_repairs_a_v0_shaped_schema(tmp_path: Path) -> None:
@@ -322,7 +353,7 @@ def test_misleading_current_user_version_repairs_a_v0_shaped_schema(tmp_path: Pa
 
     assert {"objective", "package_association"} <= columns
     assert direction_table is not None
-    assert _schema_version(database_path) == 2
+    assert _schema_version(database_path) == 3
 
 
 def test_failed_migration_does_not_advance_schema_version(tmp_path: Path) -> None:
@@ -936,3 +967,358 @@ def test_decline_reconsideration_result_is_unique_by_decision_and_replacement(tm
             pass
         else:
             raise AssertionError("one replacement proposal must have at most one decline result")
+
+
+def test_pending_operation_claim_is_atomic_and_terminal_operations_cannot_be_reclaimed(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "operations.sqlite"
+    investigation = _v05_investigation()
+    operation = _operation()
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_pending_operation(operation)
+        assert store.claim_pending_operation(
+            operation.operation_id, "runner-001", BASE_TIME + timedelta(seconds=1)
+        )
+        assert not store.claim_pending_operation(
+            operation.operation_id, "runner-002", BASE_TIME + timedelta(seconds=2)
+        )
+        failed = store.mark_operation_failed(
+            operation.operation_id, "runner-001", BASE_TIME + timedelta(seconds=3)
+        )
+        assert failed.status == "FAILED"
+        assert not store.claim_pending_operation(
+            operation.operation_id, "runner-001", BASE_TIME + timedelta(seconds=4)
+        )
+
+
+def test_retry_operation_preserves_terminal_prior_attempt_provenance(tmp_path: Path) -> None:
+    database_path = tmp_path / "operation-retry.sqlite"
+    investigation = _v05_investigation()
+    original = _proposal()
+    decision = _decision("DECLINE", instruction_or_reason="Use a different approach.")
+    first = _operation(
+        "operation-first",
+        operation_type="DECLINE_REDIRECT",
+        triggering_proposal_id=original.proposal_id,
+        triggering_decision_id=decision.decision_id,
+    )
+    retry = _operation(
+        "operation-retry",
+        operation_type="DECLINE_REDIRECT",
+        triggering_proposal_id=original.proposal_id,
+        triggering_decision_id=decision.decision_id,
+        prior_attempt_operation_id=first.operation_id,
+        updated_at=BASE_TIME + timedelta(minutes=2),
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_proposal(investigation.investigation_id, original)
+        store.persist_decline_with_pending_operation(original, decision, first)
+        assert store.claim_pending_operation(first.operation_id, "runner-001", BASE_TIME + timedelta(seconds=1))
+        store.mark_operation_interrupted(first.operation_id, "runner-001", BASE_TIME + timedelta(seconds=2))
+        store.add_pending_operation(retry)
+        assert store.list_agent_operations(investigation.investigation_id) == (
+            store.get_agent_operation(first.operation_id), retry,
+        )
+
+
+def test_pending_operation_rejects_mismatched_triggering_decision_type(tmp_path: Path) -> None:
+    database_path = tmp_path / "operation-decision-type.sqlite"
+    investigation = _v05_investigation()
+    modified = _proposal("proposal-modified")
+    declined = _proposal("proposal-declined")
+    modify_decision = _decision(
+        "MODIFY", proposal_id=modified.proposal_id, decision_id="decision-modify",
+        instruction_or_reason="Narrow the action.",
+    )
+    decline_decision = _decision(
+        "DECLINE", proposal_id=declined.proposal_id, decision_id="decision-decline",
+        instruction_or_reason="Use another approach.",
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_proposal(investigation.investigation_id, modified)
+        store.persist_modify_with_pending_operation(
+            modified,
+            modify_decision,
+            _operation(
+                "operation-existing-modify", operation_type="MODIFY",
+                triggering_proposal_id=modified.proposal_id,
+                triggering_decision_id=modify_decision.decision_id,
+            ),
+        )
+        store.add_proposal(investigation.investigation_id, declined)
+        store.persist_human_decision(declined, decline_decision)
+        for operation in (
+            _operation(
+                "operation-wrong-modify", operation_type="MODIFY",
+                triggering_proposal_id=declined.proposal_id,
+                triggering_decision_id=decline_decision.decision_id,
+            ),
+            _operation(
+                "operation-wrong-decline-redirect", operation_type="DECLINE_REDIRECT",
+                triggering_proposal_id=modified.proposal_id,
+                triggering_decision_id=modify_decision.decision_id,
+            ),
+            _operation(
+                "operation-wrong-decline-reconsider", operation_type="DECLINE_RECONSIDER",
+                triggering_proposal_id=modified.proposal_id,
+                triggering_decision_id=modify_decision.decision_id,
+            ),
+        ):
+            try:
+                store.add_pending_operation(operation)
+            except ValueError as error:
+                assert "triggering decision" in str(error)
+            else:
+                raise AssertionError("operation type must match its triggering decision")
+
+
+def test_retry_operation_rejects_different_triggering_references(tmp_path: Path) -> None:
+    database_path = tmp_path / "operation-retry-trigger.sqlite"
+    investigation = _v05_investigation()
+    first_proposal = _proposal("proposal-first")
+    second_proposal = _proposal("proposal-second")
+    first_decision = _decision(
+        "DECLINE", proposal_id=first_proposal.proposal_id, decision_id="decision-first",
+        instruction_or_reason="Use a different approach.",
+    )
+    second_decision = _decision(
+        "DECLINE", proposal_id=second_proposal.proposal_id, decision_id="decision-second",
+        instruction_or_reason="Use a different approach.",
+    )
+    first = _operation(
+        "operation-first", operation_type="DECLINE_REDIRECT",
+        triggering_proposal_id=first_proposal.proposal_id,
+        triggering_decision_id=first_decision.decision_id,
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_proposal(investigation.investigation_id, first_proposal)
+        store.persist_decline_with_pending_operation(first_proposal, first_decision, first)
+        assert store.claim_pending_operation(first.operation_id, "runner-001", BASE_TIME)
+        store.mark_operation_failed(first.operation_id, "runner-001", BASE_TIME + timedelta(seconds=1))
+        store.add_proposal(investigation.investigation_id, second_proposal)
+        store.persist_human_decision(second_proposal, second_decision)
+        invalid_retry = _operation(
+            "operation-retry", operation_type="DECLINE_REDIRECT",
+            triggering_proposal_id=second_proposal.proposal_id,
+            triggering_decision_id=second_decision.decision_id,
+            prior_attempt_operation_id=first.operation_id,
+            updated_at=BASE_TIME + timedelta(minutes=1),
+        )
+        try:
+            store.add_pending_operation(invalid_retry)
+        except ValueError as error:
+            assert "same triggering references" in str(error)
+        else:
+            raise AssertionError("retry must preserve the logical-request references")
+
+
+def test_previous_process_running_operations_become_interrupted(tmp_path: Path) -> None:
+    database_path = tmp_path / "interrupted.sqlite"
+    investigation = _v05_investigation()
+    operation = _operation()
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_pending_operation(operation)
+        assert store.claim_pending_operation(operation.operation_id, "previous-process", BASE_TIME)
+        interrupted = store.interrupt_operations_from_previous_process(
+            "current-process", BASE_TIME + timedelta(minutes=1)
+        )
+        assert interrupted == (
+            store.get_agent_operation(operation.operation_id),
+        )
+        assert interrupted[0].status == "INTERRUPTED"
+
+
+def test_start_result_and_completion_are_atomic(tmp_path: Path) -> None:
+    database_path = tmp_path / "start-completion.sqlite"
+    target = _v05_investigation("investigation-target")
+    other = _v05_investigation("investigation-other")
+    duplicate = _proposal("proposal-duplicate")
+    operation = _operation("operation-start", investigation_id=target.investigation_id)
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(other)
+        store.add_proposal(other.investigation_id, duplicate)
+        store.add_investigation(target)
+        store.add_pending_operation(operation)
+        assert store.claim_pending_operation(operation.operation_id, "runner-001", BASE_TIME)
+        try:
+            store.complete_start_operation(
+                operation.operation_id,
+                "runner-001",
+                _direction("direction-target", investigation_id=target.investigation_id),
+                _proposal("proposal-duplicate"),
+                BASE_TIME + timedelta(minutes=1),
+            )
+        except ValueError as error:
+            assert "integrity" in str(error)
+        else:
+            raise AssertionError("duplicate generated proposal must fail inside completion transaction")
+        assert store.get_current_direction(target.investigation_id) is None
+        assert store.list_proposals(target.investigation_id) == ()
+        assert store.get_agent_operation(operation.operation_id).status == "RUNNING"
+
+
+def test_successful_start_result_and_completion_are_one_persisted_transaction(tmp_path: Path) -> None:
+    database_path = tmp_path / "start-success.sqlite"
+    investigation = _v05_investigation()
+    operation = _operation("operation-start")
+    direction = _direction()
+    proposal = _proposal()
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation_with_pending_start_operation(investigation, operation)
+        assert store.claim_pending_operation(operation.operation_id, "runner-001", BASE_TIME)
+        store.complete_start_operation(
+            operation.operation_id, "runner-001", direction, proposal,
+            BASE_TIME + timedelta(minutes=1),
+        )
+        assert store.list_directions(investigation.investigation_id) == (direction,)
+        assert store.list_proposals(investigation.investigation_id) == (proposal,)
+        assert store.get_agent_operation(operation.operation_id).status == "COMPLETED"
+
+
+def test_modify_result_completion_is_atomic_and_preserves_prior_human_decision(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "modify-completion.sqlite"
+    investigation = _v05_investigation()
+    original = _proposal()
+    decision = _decision("MODIFY", instruction_or_reason="Focus on transfers.")
+    operation = _operation(
+        "operation-modify", operation_type="MODIFY", triggering_proposal_id=original.proposal_id,
+        triggering_decision_id=decision.decision_id,
+    )
+    duplicate = _proposal("proposal-duplicate")
+    revised = AnalyticalActionProposal(
+        duplicate.proposal_id, "Revised action.", original.purpose, original.why_now,
+        original.data_to_be_used, original.expected_output, "PROPOSED",
+        BASE_TIME + timedelta(minutes=2), original.proposal_id,
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_direction(_direction())
+        store.add_proposal(investigation.investigation_id, original)
+        store.persist_modify_with_pending_operation(original, decision, operation)
+        store.add_investigation(_v05_investigation("investigation-other"))
+        store.add_proposal("investigation-other", duplicate)
+        assert store.claim_pending_operation(operation.operation_id, "runner-001", BASE_TIME)
+        try:
+            store.complete_modify_operation(
+                operation.operation_id, "runner-001", revised,
+                _direction("direction-002", version=2, provenance="MODIFY", trigger_reference_id=decision.decision_id),
+                BASE_TIME + timedelta(minutes=3),
+            )
+        except ValueError as error:
+            assert "integrity" in str(error)
+        else:
+            raise AssertionError("duplicate revision must roll back completion")
+        assert store.list_decisions(investigation.investigation_id) == (decision,)
+        assert store.list_proposals(investigation.investigation_id)[0].status == "MODIFIED"
+        assert store.list_directions(investigation.investigation_id) == (_direction(),)
+        assert store.get_agent_operation(operation.operation_id).status == "RUNNING"
+
+
+def test_successful_modify_result_and_completion_are_one_persisted_transaction(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "modify-success.sqlite"
+    investigation = _v05_investigation()
+    original = _proposal()
+    decision = _decision("MODIFY", instruction_or_reason="Focus on transfers.")
+    operation = _operation(
+        "operation-modify", operation_type="MODIFY", triggering_proposal_id=original.proposal_id,
+        triggering_decision_id=decision.decision_id,
+    )
+    revised = AnalyticalActionProposal(
+        "proposal-revised", "Revised action.", original.purpose, original.why_now,
+        original.data_to_be_used, original.expected_output, "PROPOSED",
+        BASE_TIME + timedelta(minutes=2), original.proposal_id,
+    )
+    direction = _direction(
+        "direction-002", version=2, provenance="MODIFY", trigger_reference_id=decision.decision_id
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_direction(_direction())
+        store.add_proposal(investigation.investigation_id, original)
+        store.persist_modify_with_pending_operation(original, decision, operation)
+        assert store.claim_pending_operation(operation.operation_id, "runner-001", BASE_TIME)
+        store.complete_modify_operation(
+            operation.operation_id, "runner-001", revised, direction,
+            BASE_TIME + timedelta(minutes=3),
+        )
+        assert store.list_proposals(investigation.investigation_id)[-1] == revised
+        assert store.list_directions(investigation.investigation_id)[-1] == direction
+        assert store.get_agent_operation(operation.operation_id).status == "COMPLETED"
+
+
+def test_decline_reconsideration_completion_is_atomic_and_preserves_decline(tmp_path: Path) -> None:
+    database_path = tmp_path / "decline-completion.sqlite"
+    investigation = _v05_investigation()
+    original = _proposal()
+    decision = _decision("DECLINE", instruction_or_reason="Use a different approach.")
+    operation = _operation(
+        "operation-decline", operation_type="DECLINE_REDIRECT",
+        triggering_proposal_id=original.proposal_id, triggering_decision_id=decision.decision_id,
+    )
+    duplicate = _proposal("proposal-duplicate")
+    result = DeclineReconsiderationResult(decision.decision_id, duplicate.proposal_id, BASE_TIME)
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_direction(_direction())
+        store.add_proposal(investigation.investigation_id, original)
+        store.persist_decline_with_pending_operation(original, decision, operation)
+        store.add_investigation(_v05_investigation("investigation-other"))
+        store.add_proposal("investigation-other", duplicate)
+        assert store.claim_pending_operation(operation.operation_id, "runner-001", BASE_TIME)
+        try:
+            store.complete_decline_reconsideration_operation(
+                operation.operation_id, "runner-001", _proposal("proposal-duplicate"),
+                _direction("direction-002", version=2, provenance="DECLINE_REDIRECT", trigger_reference_id=decision.decision_id),
+                result, BASE_TIME + timedelta(minutes=1),
+            )
+        except ValueError as error:
+            assert "integrity" in str(error)
+        else:
+            raise AssertionError("duplicate replacement must roll back completion")
+        assert store.list_decisions(investigation.investigation_id) == (decision,)
+        assert store.list_proposals(investigation.investigation_id)[0].status == "DECLINED"
+        assert store.list_directions(investigation.investigation_id) == (_direction(),)
+        assert store.get_decline_reconsideration_result(decision.decision_id) is None
+        assert store.get_agent_operation(operation.operation_id).status == "RUNNING"
+
+
+def test_successful_decline_reconsideration_result_and_completion_are_atomic(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "decline-success.sqlite"
+    investigation = _v05_investigation()
+    original = _proposal()
+    decision = _decision("DECLINE", instruction_or_reason="Use a different approach.")
+    operation = _operation(
+        "operation-decline", operation_type="DECLINE_REDIRECT",
+        triggering_proposal_id=original.proposal_id, triggering_decision_id=decision.decision_id,
+    )
+    replacement = _proposal("proposal-replacement", created_at=BASE_TIME + timedelta(minutes=2))
+    direction = _direction(
+        "direction-002", version=2, provenance="DECLINE_REDIRECT", trigger_reference_id=decision.decision_id
+    )
+    result = DeclineReconsiderationResult(decision.decision_id, replacement.proposal_id, BASE_TIME)
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_direction(_direction())
+        store.add_proposal(investigation.investigation_id, original)
+        store.persist_decline_with_pending_operation(original, decision, operation)
+        assert store.claim_pending_operation(operation.operation_id, "runner-001", BASE_TIME)
+        store.complete_decline_reconsideration_operation(
+            operation.operation_id, "runner-001", replacement, direction, result,
+            BASE_TIME + timedelta(minutes=3),
+        )
+        assert store.list_proposals(investigation.investigation_id)[-1] == replacement
+        assert store.list_directions(investigation.investigation_id)[-1] == direction
+        assert store.get_decline_reconsideration_result(decision.decision_id) == result
+        assert store.get_agent_operation(operation.operation_id).status == "COMPLETED"
