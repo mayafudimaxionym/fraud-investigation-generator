@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **IN PROGRESS**. Its approved documentation baseline and Tasks 1–5 are committed and pushed; Task 6 persisted-state lifecycle/read projection is local and pending review.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **IN PROGRESS**. Tasks 1–7 are complete; Task 8 acceptance verification remains.
 
 ## Architecture baseline
 
@@ -55,8 +55,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- V0.5 Task 6 adds a deterministic, side-effect-free persisted-state projection: safe investigation summaries/details, fact-derived lifecycle state, direction/proposal/decision history, decline-reconsideration provenance, and recoverable Attention reasons. This work awaits review and commit.
-- V0.5 Task 7 investigator UI work has not started.
+- V0.5 Task 8 acceptance verification remains.
 
 ## Current blockers
 

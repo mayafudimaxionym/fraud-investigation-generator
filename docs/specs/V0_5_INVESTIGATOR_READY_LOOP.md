@@ -41,6 +41,8 @@ An optional **Investigation Objective** is prefilled as editable text:
 
 The investigator may keep, edit, replace, or delete it. The effective objective, including an intentional blank, is persisted at investigation level.
 
+For legacy investigations, `None` means that no effective objective was recorded, while `""` means the investigator intentionally chose a blank objective. An investigator may establish missing legacy objective metadata exactly once; this is metadata completion, not analytical history, and cannot edit or replace an already established objective.
+
 The initial flow is:
 
 ```text

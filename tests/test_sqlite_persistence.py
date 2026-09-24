@@ -2,6 +2,8 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from investigation.models import (
     AnalyticalActionProposal,
     HumanDecision,
@@ -611,6 +613,31 @@ def test_store_rejects_blank_or_replaced_package_associations(tmp_path: Path) ->
             assert "already has" in str(error)
         else:
             raise AssertionError("package associations must not be silently replaced")
+
+
+def test_store_sets_legacy_objective_once_without_changing_other_history(tmp_path: Path) -> None:
+    database_path = tmp_path / "investigations.sqlite"
+    legacy = InvestigationRecord("legacy", "development-case-42", BASE_TIME, BASE_TIME, None, "case-42")
+    proposal = AnalyticalActionProposal("proposal", "Review events.", "Assess.", "Now.", "visible_events.csv", "Summary.", "PROPOSED", BASE_TIME)
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(legacy)
+        store.add_proposal(legacy.investigation_id, proposal)
+        before_proposals = store.list_proposals(legacy.investigation_id)
+        recovered = store.set_objective_if_missing(legacy.investigation_id, "")
+        assert recovered.objective == ""
+        assert recovered.case_reference == legacy.case_reference
+        assert recovered.package_association == legacy.package_association
+        assert recovered.created_at == legacy.created_at
+        assert store.list_proposals(legacy.investigation_id) == before_proposals
+        assert store.list_directions(legacy.investigation_id) == ()
+        assert store.list_decisions(legacy.investigation_id) == ()
+        for value in ("replacement", ""):
+            with pytest.raises(ValueError, match="already established"):
+                store.set_objective_if_missing(legacy.investigation_id, value)
+        with pytest.raises(ValueError, match="does not exist"):
+            store.set_objective_if_missing("unknown", "objective")
+    with SQLiteInvestigationStore(database_path) as reopened:
+        assert reopened.get_investigation(legacy.investigation_id).objective == ""
 
 
 def test_direction_history_preserves_version_and_text_order(tmp_path: Path) -> None:

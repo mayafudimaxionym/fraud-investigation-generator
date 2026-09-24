@@ -685,7 +685,7 @@ Once this works correctly, we add controlled execution.
 
 # **14.5\. V0.5 Investigator-Ready Investigation Loop**
 
-V0.5 is an approved extension of V0 that preserves the local, governed, no-execution architecture. It adds an investigator-ready navigation and Resume experience, a persisted effective objective, a safe persisted package association, and authoritative persisted lifecycle reconstruction.
+V0.5 is an approved extension of V0 that preserves the local, governed, no-execution architecture. It adds an investigator-ready navigation and Resume experience, a persisted effective objective, a safe persisted package association, and authoritative persisted lifecycle reconstruction. A legacy missing objective may be established once as metadata completion; an intentional blank remains an established objective rather than missing state.
 
 V0.5 introduces `InvestigationDirection`: a lightweight, versioned persisted snapshot of ordered textual competing explanations and provisional plan steps. Versions append rather than overwrite and retain minimal provenance. Structured JSON text in SQLite is appropriate for these lists. Direction is not formal Hypothesis, Finding, Evidence, confidence, executable-task, or institutional-knowledge modeling.
 

@@ -353,6 +353,21 @@ class InvestigatorReadyApprovalLoopService:
             decisions=self._store.list_decisions(investigation_id),
         )
 
+    def set_legacy_objective_if_missing(
+        self, investigation_id: str, objective: str
+    ) -> InvestigatorReadyState:
+        """Complete missing legacy metadata once without agent reasoning or history changes."""
+        self._store.set_objective_if_missing(investigation_id, objective)
+        return self.get_state(investigation_id)
+
+    def set_legacy_package_association_if_missing(
+        self, investigation_id: str, association_id: str
+    ) -> InvestigatorReadyState:
+        """Attach only an explicitly selected configured case to a legacy investigation."""
+        self._catalog.load_context(association_id)
+        self._store.set_package_association_if_missing(investigation_id, association_id)
+        return self.get_state(investigation_id)
+
     def _reconsider_decline(
         self,
         investigation_id: str,

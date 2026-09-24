@@ -121,6 +121,28 @@ class SQLiteInvestigationStore:
             )
         return self.get_investigation(investigation_id)
 
+    def set_objective_if_missing(
+        self, investigation_id: str, objective: str
+    ) -> InvestigationRecord:
+        """Set legacy objective metadata once, preserving intentional blank text."""
+        if not isinstance(objective, str):
+            raise ValueError("objective must be a string")
+        with self._connection:
+            cursor = self._connection.execute(
+                "UPDATE investigations SET objective = ? "
+                "WHERE investigation_id = ? AND objective IS NULL",
+                (objective, investigation_id),
+            )
+            if cursor.rowcount == 1:
+                return self.get_investigation(investigation_id)
+            existing = self._connection.execute(
+                "SELECT objective FROM investigations WHERE investigation_id = ?",
+                (investigation_id,),
+            ).fetchone()
+            if existing is None:
+                raise ValueError("investigation does not exist")
+            raise ValueError("investigation objective is already established")
+
     def add_proposal(
         self, investigation_id: str, proposal: AnalyticalActionProposal
     ) -> None:

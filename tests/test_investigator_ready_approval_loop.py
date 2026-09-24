@@ -341,7 +341,7 @@ def test_approve_persists_only_the_decision_and_never_generates_or_changes_direc
 
 
 def test_legacy_missing_association_or_objective_is_recoverable_without_guessing(tmp_path: Path) -> None:
-    store, service, _, _ = _service(tmp_path)
+    store, service, agent, preflight = _service(tmp_path)
     legacy = InvestigationRecord("legacy", "development-case-42", BASE_TIME, BASE_TIME, None, None)
     store.add_investigation(legacy)
     proposal = AnalyticalActionProposal(
@@ -362,6 +362,9 @@ def test_legacy_missing_association_or_objective_is_recoverable_without_guessing
     with pytest.raises(InvestigatorReadyServiceError) as objective_error:
         service.modify(no_objective.investigation_id, objective_proposal.proposal_id, "Focus it.")
     assert objective_error.value.category == "OBJECTIVE_UNAVAILABLE"
+    recovered = service.set_legacy_objective_if_missing(no_objective.investigation_id, "")
+    assert recovered.investigation.objective == ""
+    assert agent.requests == [] and preflight.calls == 0
     store.close()
 
 

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from investigation.app import _build_service, optional_decline_reason, select_active_proposal
+from investigation.app import DEFAULT_OBJECTIVE, _build_dependencies, operation_working_label, optional_decline_reason, select_active_proposal
 from investigation.models import AnalyticalActionProposal
 
 
@@ -48,15 +48,14 @@ def test_optional_decline_reason_converts_blank_input_to_none() -> None:
     assert optional_decline_reason("Use another source first.") == "Use another source first."
 
 
-def test_service_factory_creates_a_fresh_store_for_each_ui_execution(
+def test_dependency_factory_creates_a_fresh_store_for_each_ui_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("investigation.app.DATABASE_PATH", tmp_path / "investigations.sqlite")
 
-    first_service, first_store = _build_service()
-    second_service, second_store = _build_service()
+    first_store, _, _, _, _ = _build_dependencies()
+    second_store, _, _, _, _ = _build_dependencies()
     try:
-        assert first_service is not second_service
         assert first_store is not second_store
     finally:
         first_store.close()
@@ -72,15 +71,30 @@ def test_initial_streamlit_screen_renders_without_invoking_ollama(
     app.run()
 
     assert not app.exception
-    assert app.title[0].value == "V0 Fraud Investigation Approval Loop"
-    assert {item.label for item in app.text_input} >= {
-        "Case reference",
-        "Investigator package directory",
-        "Existing investigation ID",
-        "Package directory for existing investigation",
-    }
-    assert {item.label for item in app.text_area} >= {"Investigator instruction"}
-    assert {item.label for item in app.button} >= {
-        "Start investigation",
-        "Load investigation",
-    }
+    assert app.title[0].value == "Investigations"
+    assert {item.label for item in app.button} >= {"+ New investigation"}
+    assert "package directory" not in str(app).casefold()
+
+
+def test_default_objective_is_exact_and_blank_is_preserved() -> None:
+    assert DEFAULT_OBJECTIVE == (
+        "Investigate the reported suspicious activity, identify relevant patterns and relationships, "
+        "and assess the plausible explanations without assuming any explanation is established in advance."
+    )
+    assert optional_decline_reason("") is None
+
+
+def test_working_labels_are_transient_operation_labels_without_progress_or_eta() -> None:
+    assert operation_working_label("start") == "Preparing investigation approach"
+    for operation in ("modify", "decline", "retry", "approve"):
+        assert operation_working_label(operation) == "Adjusting investigation plan"
+
+
+def test_investigator_ui_uses_safe_boundaries_and_no_execution_path() -> None:
+    source = (Path(__file__).parents[1] / "investigation" / "app.py").read_text(encoding="utf-8").casefold()
+    assert "evaluator_only" not in source
+    assert "ground_truth" not in source
+    assert "csv.reader" not in source
+    assert ".execute(" not in source
+    assert "def execute" not in source
+    assert "try again" in source and "retry_decline_reconsideration" in source
