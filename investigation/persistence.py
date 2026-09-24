@@ -652,6 +652,13 @@ class SQLiteInvestigationStore:
                 raise ValueError("operation decision does not exist")
             if decision["proposal_id"] != operation.triggering_proposal_id:
                 raise ValueError("operation decision must belong to its triggering proposal")
+            expected_decision_type = (
+                "MODIFY"
+                if operation.operation_type == "MODIFY"
+                else "DECLINE"
+            )
+            if decision["decision_type"] != expected_decision_type:
+                raise ValueError("operation type must match its triggering decision")
         if operation.prior_attempt_operation_id is not None:
             prior = self.get_agent_operation(operation.prior_attempt_operation_id)
             if prior.investigation_id != operation.investigation_id:
@@ -660,6 +667,11 @@ class SQLiteInvestigationStore:
                 raise ValueError("prior attempt must have the same operation type")
             if prior.status not in ("FAILED", "INTERRUPTED"):
                 raise ValueError("prior attempt must be FAILED or INTERRUPTED")
+            if (
+                prior.triggering_proposal_id != operation.triggering_proposal_id
+                or prior.triggering_decision_id != operation.triggering_decision_id
+            ):
+                raise ValueError("prior attempt must have the same triggering references")
 
     def _insert_proposal(
         self, investigation_id: str, proposal: AnalyticalActionProposal

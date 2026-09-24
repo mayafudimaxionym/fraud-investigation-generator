@@ -1024,6 +1024,99 @@ def test_retry_operation_preserves_terminal_prior_attempt_provenance(tmp_path: P
         )
 
 
+def test_pending_operation_rejects_mismatched_triggering_decision_type(tmp_path: Path) -> None:
+    database_path = tmp_path / "operation-decision-type.sqlite"
+    investigation = _v05_investigation()
+    modified = _proposal("proposal-modified")
+    declined = _proposal("proposal-declined")
+    modify_decision = _decision(
+        "MODIFY", proposal_id=modified.proposal_id, decision_id="decision-modify",
+        instruction_or_reason="Narrow the action.",
+    )
+    decline_decision = _decision(
+        "DECLINE", proposal_id=declined.proposal_id, decision_id="decision-decline",
+        instruction_or_reason="Use another approach.",
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_proposal(investigation.investigation_id, modified)
+        store.persist_modify_with_pending_operation(
+            modified,
+            modify_decision,
+            _operation(
+                "operation-existing-modify", operation_type="MODIFY",
+                triggering_proposal_id=modified.proposal_id,
+                triggering_decision_id=modify_decision.decision_id,
+            ),
+        )
+        store.add_proposal(investigation.investigation_id, declined)
+        store.persist_human_decision(declined, decline_decision)
+        for operation in (
+            _operation(
+                "operation-wrong-modify", operation_type="MODIFY",
+                triggering_proposal_id=declined.proposal_id,
+                triggering_decision_id=decline_decision.decision_id,
+            ),
+            _operation(
+                "operation-wrong-decline-redirect", operation_type="DECLINE_REDIRECT",
+                triggering_proposal_id=modified.proposal_id,
+                triggering_decision_id=modify_decision.decision_id,
+            ),
+            _operation(
+                "operation-wrong-decline-reconsider", operation_type="DECLINE_RECONSIDER",
+                triggering_proposal_id=modified.proposal_id,
+                triggering_decision_id=modify_decision.decision_id,
+            ),
+        ):
+            try:
+                store.add_pending_operation(operation)
+            except ValueError as error:
+                assert "triggering decision" in str(error)
+            else:
+                raise AssertionError("operation type must match its triggering decision")
+
+
+def test_retry_operation_rejects_different_triggering_references(tmp_path: Path) -> None:
+    database_path = tmp_path / "operation-retry-trigger.sqlite"
+    investigation = _v05_investigation()
+    first_proposal = _proposal("proposal-first")
+    second_proposal = _proposal("proposal-second")
+    first_decision = _decision(
+        "DECLINE", proposal_id=first_proposal.proposal_id, decision_id="decision-first",
+        instruction_or_reason="Use a different approach.",
+    )
+    second_decision = _decision(
+        "DECLINE", proposal_id=second_proposal.proposal_id, decision_id="decision-second",
+        instruction_or_reason="Use a different approach.",
+    )
+    first = _operation(
+        "operation-first", operation_type="DECLINE_REDIRECT",
+        triggering_proposal_id=first_proposal.proposal_id,
+        triggering_decision_id=first_decision.decision_id,
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_proposal(investigation.investigation_id, first_proposal)
+        store.persist_decline_with_pending_operation(first_proposal, first_decision, first)
+        assert store.claim_pending_operation(first.operation_id, "runner-001", BASE_TIME)
+        store.mark_operation_failed(first.operation_id, "runner-001", BASE_TIME + timedelta(seconds=1))
+        store.add_proposal(investigation.investigation_id, second_proposal)
+        store.persist_human_decision(second_proposal, second_decision)
+        invalid_retry = _operation(
+            "operation-retry", operation_type="DECLINE_REDIRECT",
+            triggering_proposal_id=second_proposal.proposal_id,
+            triggering_decision_id=second_decision.decision_id,
+            prior_attempt_operation_id=first.operation_id,
+            updated_at=BASE_TIME + timedelta(minutes=1),
+        )
+        try:
+            store.add_pending_operation(invalid_retry)
+        except ValueError as error:
+            assert "same triggering references" in str(error)
+        else:
+            raise AssertionError("retry must preserve the logical-request references")
+
+
 def test_previous_process_running_operations_become_interrupted(tmp_path: Path) -> None:
     database_path = tmp_path / "interrupted.sqlite"
     investigation = _v05_investigation()
