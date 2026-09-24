@@ -1,6 +1,6 @@
 # V0.5 — Investigator-Ready Investigation Loop
 
-**Status:** Product design approved; architecture approved; implementation in progress.
+**Status:** Product design approved; architecture approved; remediation implementation pending.
 
 ## Purpose and baseline
 
@@ -17,7 +17,7 @@ V0.5 does not execute analytical actions. Controlled analytical execution remain
 
 ## Investigator experience
 
-Normal operation begins at an **Investigations** page with **New investigation** and a recent-investigations list. Summaries show investigator-relevant case reference/name, domain where available, lifecycle state, relevant current/latest action, last activity, and **Resume**.
+Normal operation begins at an **Investigations** page with **New investigation** and a recent-investigations list. Summaries show investigator-relevant case reference/name, domain where available, lifecycle state, relevant current/latest action, last activity, and **Resume**. The authoritative grouping identity for this landing page is the persisted safe package association. Investigations associated with the same configured safe package/case belong to one investigator-facing case entry, which presents the current/latest investigation state for that association rather than every historical `InvestigationRecord`. Mutable/display-oriented text such as `case_reference` is not the grouping key. Historical records remain available through history/provenance as appropriate, not as separate Recent Investigations cards solely because separate records exist.
 
 Normal operation must not require entering UUIDs, package/filesystem paths, SQLite paths, Ollama commands, environment variables, model IDs, or timeout values. Lifecycle presentation should be derived from authoritative persisted facts rather than an independently mutable duplicate status where possible.
 
@@ -29,7 +29,9 @@ Primary investigator-facing states are:
 - **Approved**;
 - **Attention**.
 
-Examples include an active `PROPOSED` proposal as Needs review, a latest `APPROVED` proposal as Approved, a synchronous model request as Agent working, and a committed decline followed by failed replacement generation as Attention.
+The confirmed investigator flow presents explicit screens for New investigation, Agent Working (initial), Needs review, Modify, Agent Working (revision), Decline/Redirect, Agent Working (reconsideration), Approved, and Attention/Resume. Every investigation-level screen provides a visible **← Back to Investigations** control. Back changes presentation only; it does not cancel a persisted agent operation.
+
+Examples include an active `PROPOSED` proposal as Needs review, a latest `APPROVED` proposal as Approved, a durable pending or running model operation as Agent working, and a committed decline followed by failed replacement generation as Attention.
 
 ## Starting and resuming investigations
 
@@ -47,15 +49,20 @@ The initial flow is:
 
 ```text
 safe investigator context + effective objective
+→ persist Investigation + objective + package association + START operation pending render
+→ render Agent Working
+→ acknowledge render and atomically claim the operation
 → agent
 → InvestigationDirection v1 + Proposal 1
-→ persist together
+→ persist together and complete the operation
 → Needs review
 ```
 
-After successful initial agent generation, `InvestigationDirection` v1 and Proposal 1 must be persisted atomically: both persist or neither persists. A persistence failure must not leave either record committed without the other. A generation failure creates neither. No partial direction/proposal pair may become authoritative persisted investigation state.
+After successful initial agent generation, `InvestigationDirection` v1 and Proposal 1 must be persisted atomically: both persist or neither persists. A persistence failure must not leave either record committed without the other. A generation failure creates neither direction nor Proposal 1. No partial direction/proposal pair may become authoritative persisted investigation state.
 
 Resume uses the persisted safe package association and authoritative persisted state; it does not rely on transient Streamlit state or require the investigator to re-enter a package path. An approved investigation prominently shows **LAST ACTION APPROVED**, the approved five-field action, current direction, history, and investigator context. Needs review returns to the outstanding proposal; Attention returns to its recovery action.
+
+Legacy investigations without a safe package association must not be guessed into a landing-page case grouping. They follow the existing recovery/Attention semantics until the association is explicitly established.
 
 ## Governed context and analytical discipline
 
@@ -102,7 +109,7 @@ Approve is terminal for the V0.5 cycle and creates no analytical result.
 
 ### Modify
 
-Modify keeps the basic action but changes it according to the investigator instruction. The original proposal becomes `MODIFIED`; its instruction persists; the agent receives safe current direction, original proposal, and instruction; and a new five-field `PROPOSED` revision retains explicit revision lineage. It returns to Needs review and requires a fresh decision.
+Modify keeps the basic action but changes it according to the investigator instruction. The original proposal becomes `MODIFIED`, its immutable Modify decision/instruction persists, and a `MODIFY` operation becomes pending render in one authoritative transition. No revision exists at that point. After the Working screen has rendered and the operation is claimed, the agent receives safe current direction, original proposal, and instruction. Success persists a new five-field `PROPOSED` revision with explicit revision lineage, any materially changed direction, and completes the operation. It then returns to Needs review and requires a fresh decision. Failure leaves the original proposal modified with no revision and exposes Attention.
 
 Modify may append a new `InvestigationDirection` version only when direction materially changes; otherwise the current direction remains authoritative. Modify never implies approval.
 
@@ -118,21 +125,29 @@ Proposal A → DECLINED + persisted human instruction
 → independent Proposal B → Needs review
 ```
 
-The decline is authoritative before replacement generation. If generation fails, Proposal A and the human instruction remain persisted, no Proposal B exists, and no action is authorized. Modify uses proposal revision lineage; the replacement after Decline is never a revision child of the declined proposal. A successful reconsideration persists a dedicated decline-decision-to-independent-replacement association solely for restart-safe provenance and retry idempotency. It is not a general provenance graph, lifecycle state, authorization, or execution state. The same authoritative-decline rule applies with or without guidance.
+The decline is authoritative before replacement generation. In its first phase, Proposal A becomes `DECLINED`, the immutable human decision/guidance persists, and a `DECLINE_REDIRECT` or `DECLINE_RECONSIDER` operation becomes pending render; no replacement exists. After Working has rendered and the operation is claimed, a successful reconsideration creates independent Proposal B and, when relevant, a new direction version. If generation fails, Proposal A and the human instruction remain persisted, no Proposal B exists, and no action is authorized. Modify uses proposal revision lineage; the replacement after Decline is never a revision child of the declined proposal. A successful reconsideration persists a dedicated decline-decision-to-independent-replacement association solely for restart-safe provenance and retry idempotency. It is not a general provenance graph, lifecycle state, authorization, or execution state. The same authoritative-decline rule applies with or without guidance. Retrying reconsideration creates a new explicit operation and must not persist a second Decline decision.
 
-## Local model operation and recovery
+## Visible model dispatch, recovery, and idempotency
 
 Model configuration is application/deployment-level operational configuration, not normal investigator workflow. It includes explicit Ollama base URL, model, generous hard processing limit, investigation database location, and case/package location as needed. Before agent reasoning, validate that local Ollama is reachable and the explicitly configured model is available. Do not silently substitute a model.
 
-Investigator-visible failures distinguish at least service unavailable, model unavailable, request timeout, and generation error. While legitimate synchronous local inference runs, show **Agent working** with an accurate description such as *Preparing investigation approach* or *Adjusting investigation plan*, and state that no action is yet authorized. Do not invent percentages, fake stages, or completion estimates.
+V0.5 persists a narrow `AgentOperation` for visible model dispatch. An operation has its own identity, a narrowly scoped type (`START`, `MODIFY`, `DECLINE_REDIRECT`, or `DECLINE_RECONSIDER` as applicable), and a lifecycle of `PENDING_RENDER`, `RUNNING`, `COMPLETED`, `FAILED`, or `INTERRUPTED`. This is not a generic job queue, background worker, analytical executor, or workflow engine.
 
-Slow inference is not itself an error. Use a sufficiently generous configurable hard bound only for stuck requests. There is no invisible/background retry. After a failure, the prior request has terminated and persisted state is authoritative. A visible **Try again** action, when appropriate, begins a new explicit request using persisted authoritative context/instruction. Attention presents the actual failure category and an available recovery action.
+The Working screen and model dispatch occur in separate Streamlit executions. A human action first persists `PENDING_RENDER` and triggers a rerun. The complete Working screen renders without an Ollama call; a one-shot client-side render acknowledgement triggers a subsequent execution. That execution atomically claims the operation from `PENDING_RENDER` to `RUNNING`; only the successful claimant calls Ollama. Generation failures persist `FAILED` and lead to Attention.
 
-Do not introduce background-job infrastructure, task queues, or a generic workflow engine. V0.5 model operation remains synchronous: user initiates work → Agent working → local model success or controlled failure.
+For a successful claimed operation, persistence of its authoritative generated result and its `RUNNING` → `COMPLETED` transition occurs in one atomic database transaction. For `START`, Direction v1, Proposal 1, and the completed `START` operation commit together. For `MODIFY`, the revised proposal, any new Direction version, and the completed `MODIFY` operation commit together. For `DECLINE_REDIRECT` or `DECLINE_RECONSIDER`, the independent replacement proposal, any new Direction version, the decline-reconsideration association, and the completed operation commit together. If this transaction fails, none of those successful generated-result records becomes authoritative, the operation must not appear `COMPLETED`, and recovery must not infer successful completion from partial generated state. This does not roll back the already-authoritative Modify `MODIFIED` state/instruction or Decline `DECLINED` state/instruction committed before generation.
+
+Investigator-visible failures distinguish at least service unavailable, model unavailable, request timeout, and generation error. While legitimate local inference runs, show **Agent working** with an accurate description such as *Preparing investigation approach* or *Adjusting investigation plan*, and state that no action is yet authorized. Do not invent percentages, fake stages, or completion estimates.
+
+Slow inference is not itself an error. Use a sufficiently generous configurable hard bound only for stuck requests. There is no invisible/background retry. After a failure, the prior request has terminated and persisted state is authoritative. A visible **Try again** action, when appropriate, creates a new explicit operation identity using persisted authoritative context/instruction. Attention presents the actual failure category and an available recovery action.
+
+Refresh or restart preserves `PENDING_RENDER` work and may resume the normal visible dispatch path. A refresh while an operation is `RUNNING` must not duplicate dispatch. If server/process interruption leaves a `RUNNING` operation ambiguous, it becomes `INTERRUPTED` and requires Attention and an explicit new request; it is not automatically redispatched. The design provides at-most-one automatic dispatch per durable operation and exactly one committed authoritative result for a successful operation. It does not claim strict exactly-once external Ollama behavior across a process crash.
+
+Do not introduce background-job infrastructure, task queues, or a generic workflow engine. V0.5 keeps local model invocation within the visible Streamlit interaction boundary; this durable safety protocol is not V1 controlled analytical execution.
 
 ## Persistence and history
 
-V0.5 adds persisted `investigation_directions`, a narrow successful decline-reconsideration decision-to-replacement association, and minimally extends investigation metadata with effective objective and safe package association. Exact SQL schema, migrations, Python API names, and Streamlit component structure remain implementation decisions.
+V0.5 adds persisted `investigation_directions`, persisted narrow `agent_operations`, a narrow successful decline-reconsideration decision-to-replacement association, and minimally extends investigation metadata with effective objective and safe package association. The investigation database location is deterministic and must not depend on an arbitrary process working directory. Exact SQL schema, migrations, Python API names, and Streamlit component structure remain implementation decisions.
 
 History is investigator-readable and tells the investigation story rather than foregrounding database IDs. Internal IDs and lineage remain available for provenance.
 
@@ -147,8 +162,9 @@ V0.5 must not add:
 - automatic approval;
 - evaluator data in investigator runtime;
 - generic background-job/workflow infrastructure;
-- model auto-selection; or
-- full LLM conversation persistence as investigation state.
+- model auto-selection;
+- full LLM conversation persistence as investigation state; or
+- V1 controlled analytical execution.
 
 ## Acceptance boundary
 
@@ -157,14 +173,28 @@ V0.5 is complete only when all of these are demonstrated:
 1. Investigations can be started and resumed without UUIDs or package paths.
 2. Safe package loading preserves evaluator/private isolation and governed initial context.
 3. The investigator can keep, edit, replace, or remove the suggested objective.
-4. Initial and revised output presents working competing explanations and exactly one five-field proposal.
+4. Initial and revised output presents meaningful competing explanations, a genuine multi-step provisional plan, and exactly one five-field proposal whose action is narrower than the direction.
 5. Approve persists and presents the exact approved action without execution.
-6. Modify persists its instruction, produces a revision-lineage proposal, and requires fresh review.
-7. Decline commits permanently; guidance can redirect direction and create an independent fresh proposal.
+6. Modify persists its instruction and modified original before generation; success produces a materially responsive revision-lineage proposal and requires fresh review, while failure leaves no revision and presents Attention.
+7. Decline commits permanently before reconsideration; guidance is materially accounted for or explicitly constrained, and success can redirect direction and create an independent fresh proposal.
 8. Resume reconstructs lifecycle state, current direction, outstanding/approved action, and history.
 9. Ollama preflight reports unavailable service/model as Attention without substitution.
-10. Legitimately slow inference remains visibly Agent working.
-11. Failed/timed-out generation leaves no partial proposal/authorization and preserves already committed decisions/instructions.
-12. Retry is explicit and starts a new request only after the prior request terminates.
-13. Normal investigator operation requires no operational configuration knowledge.
+10. Working renders before model dispatch; slow local inference remains visibly Agent working rather than a false failure.
+11. Durable operations prevent duplicate automatic dispatch, preserve no partial proposal/authorization, and recover ambiguous interruption as Attention rather than replaying it.
+12. Retry is explicit, uses a new operation identity, and starts only after the prior request terminates.
+13. The landing list presents the current/latest investigation state per persisted safe package association rather than a raw database-record browser; mutable/display-oriented `case_reference` is not the grouping key; unassociated legacy investigations use recovery/Attention until explicitly associated; and normal investigator operation requires no operational configuration knowledge.
 14. No analytical action is executed anywhere in V0.5.
+
+### Required automated Streamlit lifecycle/integration coverage
+
+Manual acceptance remains useful but is not sufficient for this interaction boundary. V0.5 acceptance requires automated Streamlit lifecycle/integration tests that exercise the actual Streamlit/session/rerun boundary, using a delayed/fake model transport where appropriate rather than depending on real Ollama latency.
+
+At minimum, the automated coverage demonstrates:
+
+- **START:** human click → durable `PENDING_RENDER` → Agent Working visible before model dispatch → render acknowledgement → exactly one successful atomic claim → blocking/delayed fake model invocation → authoritative Needs Review projection;
+- **MODIFY:** Request revision → original `MODIFIED` plus instruction persisted plus `PENDING_RENDER` → **REVISING PROPOSED ACTION** visible before dispatch → exactly one model dispatch → revised proposal becomes current → no duplicate Modify on rerender;
+- **DECLINE + REDIRECT:** decline/instruction committed plus `PENDING_RENDER` → **ADJUSTING INVESTIGATION PLAN** visible before dispatch → exactly one reconsideration dispatch → independent replacement becomes current → no duplicate Decline;
+- **FAILURE / INTERRUPTION:** generation failure → `FAILED` → Attention; ambiguous `RUNNING` recovery → `INTERRUPTED` → Attention; no automatic redispatch; Try again creates a new operation/attempt; and Decline retry does not persist another Decline;
+- **REFRESH / DUPLICATE ACKNOWLEDGEMENT:** repeated render acknowledgements cannot dispatch twice; refresh while `PENDING_RENDER` remains safe; and refresh while `RUNNING` cannot dispatch again;
+- **NAVIGATION:** Back to Investigations does not cancel `PENDING_RENDER`, and Resume reconstructs the correct Working state; and
+- **FINAL PROJECTION:** after successful delayed model generation, the resulting authoritative state is visibly rendered without requiring application restart.

@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **COMPLETE / ACCEPTANCE VERIFIED**.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop has an **APPROVED REMEDIATION ARCHITECTURE / IMPLEMENTATION PENDING** after manual acceptance exposed UI lifecycle defects.
 
 ## Architecture baseline
 
@@ -16,7 +16,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - `AGENTS.md` provides standing AI-development instructions.
 - `ROADMAP.md` is the authoritative milestone and sequencing reference.
 - `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the approved V0 milestone specification; its implementation and formal acceptance are complete.
-- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Its implementation is in progress; Tasks 1–5 are committed and Task 6 persisted-state lifecycle/read projection is complete locally pending review.
+- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Manual acceptance exposed a discrepancy between persisted state and Streamlit presentation; the approved durable visible-dispatch remediation is pending implementation.
 - Future milestones still require separate planning and approval.
 - `docs/ARCHITECTURE.md` remains the architecture baseline, and the synthetic-case fixture remains frozen unless framework testing identifies a concrete requirement.
 
@@ -55,7 +55,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- V0.5 acceptance closure documentation is pending commit.
+- Documentation synchronizes the approved V0.5 remediation architecture. No remediation code has started.
 
 ## Current blockers
 
@@ -64,7 +64,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Next approved step
 
-No further synthetic-case work is approved. The fixture is frozen. V0.5 acceptance verified all fourteen criteria with **257 passed, 1 skipped** automated tests and explicit local `llama3:8b` availability. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
+No further synthetic-case work is approved. The fixture is frozen. V0.5 remediation implementation must establish durable visible Streamlit model dispatch, corrected lifecycle presentation, deterministic database location, and corresponding automated real-lifecycle/integration verification before V0.5 can be accepted. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
 
 ## Architectural constraints
 

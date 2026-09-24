@@ -35,9 +35,9 @@ Formal local acceptance verified governed case loading, local proposal generatio
 
 ## Current milestone
 
-### V0.5 — Investigator-Ready Investigation Loop — COMPLETE / ACCEPTANCE VERIFIED
+### V0.5 — Investigator-Ready Investigation Loop — REMEDIATION APPROVED / IMPLEMENTATION PENDING
 
-V0.5 improves the investigator-ready experience while preserving V0's governed local loop. It verified configured safe case selection, persisted objective and legacy metadata recovery, one-action review, Approve/Modify/Decline/retry behavior, restart reconstruction, local-model failure handling, and no analytical execution. It does not authorize analytical execution.
+Manual acceptance exposed a Streamlit lifecycle discrepancy: successful persisted work was not reliably presented through the interactive UI. The approved remediation adds a narrow durable visible-dispatch boundary, corrected lifecycle/recovery presentation, deterministic database location, and automated real Streamlit lifecycle/integration verification while preserving V0's governed local loop. It does not authorize analytical execution. V1 Controlled Analytical Execution remains deferred and has not started.
 
 ## Next milestones
 
