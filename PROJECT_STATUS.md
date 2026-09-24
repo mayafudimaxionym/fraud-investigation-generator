@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. The frozen synthetic-case fixture remains the governed investigation source; V0 adds a local Streamlit approval interface, local SQLite persistence, and a local Ollama proposal agent without analytical execution.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop has **APPROVED product design and architecture**, but implementation has **NOT STARTED**. The current activity is documentation synchronization; application work must wait for documentation review and acceptance.
 
 ## Architecture baseline
 
@@ -16,7 +16,8 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. The
 - `AGENTS.md` provides standing AI-development instructions.
 - `ROADMAP.md` is the authoritative milestone and sequencing reference.
 - `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the approved V0 milestone specification; its implementation and formal acceptance are complete.
-- V0 product and architecture decisions are implemented as specified. Future milestones still require separate planning and approval.
+- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Its application implementation has not started.
+- Future milestones still require separate planning and approval.
 - `docs/ARCHITECTURE.md` remains the architecture baseline, and the synthetic-case fixture remains frozen unless framework testing identifies a concrete requirement.
 
 ## Completed
@@ -54,8 +55,8 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. The
 
 ## Current uncommitted work
 
-- The verified Streamlit/SQLite connection-lifecycle correction in `investigation/app.py` and its regression coverage in `tests/test_streamlit_app.py` await commit.
-- This V0 status/roadmap synchronization awaits review and commit.
+- This V0/V0.5 status, roadmap, and documentation synchronization awaits review and commit.
+- V0.5 documentation synchronization awaits review and acceptance; no V0.5 application code is authorized yet.
 
 ## Current blockers
 
@@ -64,7 +65,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. The
 
 ## Next approved step
 
-No further synthetic-case work is approved. The fixture is frozen. V1 — Controlled execution has not started and requires separate planning and approval.
+No further synthetic-case work is approved. The fixture is frozen. V0.5 implementation may be planned only after its documentation is reviewed and accepted. V1 — Controlled execution has not started and requires separate planning and approval.
 
 ## Architectural constraints
 

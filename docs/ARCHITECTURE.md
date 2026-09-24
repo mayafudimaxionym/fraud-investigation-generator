@@ -523,16 +523,9 @@ The framework must preserve:
 * what actually executed;
 * what resulted.
 
-### **Still unresolved**
+### **V0/V0.5 approval granularity**
 
-We have **not yet decided** whether approval operates primarily at:
-
-* investigation-plan level;
-* analytical-task level;
-* individual tool-call level;
-* or dynamically according to risk.
-
-That should be designed through actual V0 usage.
+For V0 and V0.5, approval applies to exactly one proposed next analytical action, not to the provisional investigation direction or plan. V0.5 retains this boundary while improving the investigator experience; broader long-term approval granularity remains a future design question.
 
 ---
 
@@ -687,6 +680,22 @@ Persistent investigation state
 ```
 
 Once this works correctly, we add controlled execution.
+
+---
+
+# **14.5\. V0.5 Investigator-Ready Investigation Loop**
+
+V0.5 is an approved extension of V0 that preserves the local, governed, no-execution architecture. It adds an investigator-ready navigation and Resume experience, a persisted effective objective, a safe persisted package association, and authoritative persisted lifecycle reconstruction.
+
+V0.5 introduces `InvestigationDirection`: a lightweight, versioned persisted snapshot of ordered textual competing explanations and provisional plan steps. Versions append rather than overwrite and retain minimal provenance. Structured JSON text in SQLite is appropriate for these lists. Direction is not formal Hypothesis, Finding, Evidence, confidence, executable-task, or institutional-knowledge modeling.
+
+After successful initial agent generation, the first direction and first proposal are an all-or-nothing persisted pair: both become authoritative state or neither does. Generation or persistence failure cannot leave a partial initial approach.
+
+The direction is distinct from the one proposed next action. Direction is provisional and never authorizes analysis. Modify retains proposal revision lineage. Decline is authoritative before any replacement generation: the declined proposal and human instruction persist first; a subsequent redirected replacement is independent rather than a revision child, and failed generation cannot roll back the decline.
+
+V0.5 model operation remains synchronous and local. Deployment configuration supplies explicit Ollama endpoint/model and a generous hard processing limit; preflight distinguishes unavailable service or model without silent substitution. The UI presents Agent working during legitimate inference and Attention with explicit recovery/retry after a terminated failure. No background job infrastructure or invisible retry is introduced.
+
+Evaluator isolation remains absolute: evaluator-only material, private truth, and raw structured rows do not enter investigator UI, inventory, prompts, or derived investigator-visible state. Approved actions remain unexecuted; controlled analytical execution remains V1.
 
 ---
 

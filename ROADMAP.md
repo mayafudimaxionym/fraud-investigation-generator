@@ -9,7 +9,7 @@ Build an on-premises agent-driven fraud investigation framework with human contr
 - **Synthetic investigation fixture — COMPLETE / FROZEN.** The deterministic investigation package is accepted test infrastructure and must not be expanded unless framework testing exposes a concrete requirement.
 - **Architecture baseline — COMPLETE.** `docs/ARCHITECTURE.md` defines the approved architectural invariants.
 
-## Current milestone
+## Completed milestone
 
 ### V0 — Agent / Human Approval Loop — IMPLEMENTED / ACCEPTANCE VERIFIED
 
@@ -33,11 +33,17 @@ Formal local acceptance verified governed case loading, local proposal generatio
 - Never provides ground truth to the agent.
 - Uses no cloud or external LLM.
 
+## Current milestone
+
+### V0.5 — Investigator-Ready Investigation Loop — PRODUCT DESIGN APPROVED / ARCHITECTURE APPROVED / IMPLEMENTATION NOT STARTED
+
+V0.5 improves the investigator-ready experience while preserving V0's governed local loop. It adds approved direction, navigation, Resume, objective, model-preflight, Attention/retry, and lifecycle documentation boundaries; it does not authorize analytical execution.
+
 ## Next milestones
 
 ### V1 — Controlled execution
 
-Define controlled execution only after V0 is complete and evaluated.
+Controlled analytical execution remains deferred and has not started.
 
 ### V2 — Investigation state
 
@@ -57,4 +63,4 @@ Define institutional memory after iterative investigation behavior is establishe
 - Autonomous action execution.
 - Expanding the frozen synthetic fixture without a concrete framework-testing requirement.
 - Persistence-format choices beyond the current V0 design needs.
-- Detailed specifications for V1–V4 before V0 decisions are resolved.
+- Detailed specifications for V1–V4 before their own product and architecture decisions are resolved.
