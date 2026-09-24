@@ -204,6 +204,30 @@ class SQLiteInvestigationStore:
             _deserialize_timestamp(row["created_at"]),
         )
 
+    def list_decline_reconsideration_results(
+        self, investigation_id: str
+    ) -> tuple[DeclineReconsiderationResult, ...]:
+        """Return restart-safe decline replacement provenance for one investigation."""
+        rows = self._connection.execute(
+            """
+            SELECT decline_reconsideration_results.*
+            FROM decline_reconsideration_results
+            JOIN decisions ON decisions.decision_id = decline_reconsideration_results.decline_decision_id
+            JOIN proposals ON proposals.proposal_id = decisions.proposal_id
+            WHERE proposals.investigation_id = ?
+            ORDER BY decline_reconsideration_results.created_at, decline_reconsideration_results.decline_decision_id
+            """,
+            (investigation_id,),
+        ).fetchall()
+        return tuple(
+            DeclineReconsiderationResult(
+                row["decline_decision_id"],
+                row["replacement_proposal_id"],
+                _deserialize_timestamp(row["created_at"]),
+            )
+            for row in rows
+        )
+
     def list_investigations(self) -> tuple[InvestigationRecord, ...]:
         """Return investigations in deterministic most-recent-first order."""
         rows = self._connection.execute(

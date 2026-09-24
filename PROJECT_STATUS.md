@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **IN PROGRESS**. Its approved documentation baseline and Tasks 1–4 are committed and pushed; Task 5 investigator-ready approval-loop orchestration is local and pending review.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **IN PROGRESS**. Its approved documentation baseline and Tasks 1–5 are committed and pushed; Task 6 persisted-state lifecycle/read projection is local and pending review.
 
 ## Architecture baseline
 
@@ -16,7 +16,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - `AGENTS.md` provides standing AI-development instructions.
 - `ROADMAP.md` is the authoritative milestone and sequencing reference.
 - `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the approved V0 milestone specification; its implementation and formal acceptance are complete.
-- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Its implementation is in progress; Tasks 1–4 are committed and Task 5 investigator-ready approval-loop orchestration is complete locally pending review.
+- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Its implementation is in progress; Tasks 1–5 are committed and Task 6 persisted-state lifecycle/read projection is complete locally pending review.
 - Future milestones still require separate planning and approval.
 - `docs/ARCHITECTURE.md` remains the architecture baseline, and the synthetic-case fixture remains frozen unless framework testing identifies a concrete requirement.
 
@@ -55,8 +55,8 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- V0.5 Task 5 adds investigator-ready initial, Modify, Approve, and authoritative Decline/reconsideration orchestration; atomic direction/proposal persistence boundaries; restart-safe decline-replacement provenance/idempotency; explicit preflight; and retry-compatible recovery boundaries. This work awaits review and commit.
-- V0.5 lifecycle projection and investigator UI work have not started.
+- V0.5 Task 6 adds a deterministic, side-effect-free persisted-state projection: safe investigation summaries/details, fact-derived lifecycle state, direction/proposal/decision history, decline-reconsideration provenance, and recoverable Attention reasons. This work awaits review and commit.
+- V0.5 Task 7 investigator UI work has not started.
 
 ## Current blockers
 
@@ -65,7 +65,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Next approved step
 
-No further synthetic-case work is approved. The fixture is frozen. V0.5 Task 5 is pending review; later lifecycle/UI work requires separate approval. V1 — Controlled execution has not started and requires separate planning and approval.
+No further synthetic-case work is approved. The fixture is frozen. V0.5 Task 6 is pending review; Task 7 investigator UI work requires separate approval. V1 — Controlled execution has not started and requires separate planning and approval.
 
 ## Architectural constraints
 
