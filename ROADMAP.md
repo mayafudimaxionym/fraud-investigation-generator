@@ -35,9 +35,9 @@ Formal local acceptance verified governed case loading, local proposal generatio
 
 ## Current milestone
 
-### V0.5 — Investigator-Ready Investigation Loop — PRODUCT DESIGN APPROVED / ARCHITECTURE APPROVED / IMPLEMENTATION IN PROGRESS
+### V0.5 — Investigator-Ready Investigation Loop — COMPLETE / ACCEPTANCE VERIFIED
 
-V0.5 improves the investigator-ready experience while preserving V0's governed local loop. Its foundational contracts, persistence, safe catalog, direction-aware proposal boundary, approval-loop orchestration, and persisted-state lifecycle/read projection are committed and pushed. The investigator-ready UI is implemented locally pending review; acceptance verification remains. It does not authorize analytical execution.
+V0.5 improves the investigator-ready experience while preserving V0's governed local loop. It verified configured safe case selection, persisted objective and legacy metadata recovery, one-action review, Approve/Modify/Decline/retry behavior, restart reconstruction, local-model failure handling, and no analytical execution. It does not authorize analytical execution.
 
 ## Next milestones
 

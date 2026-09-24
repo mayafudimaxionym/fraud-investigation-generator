@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **IN PROGRESS**. Tasks 1–7 are complete; Task 8 acceptance verification remains.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **COMPLETE / ACCEPTANCE VERIFIED**.
 
 ## Architecture baseline
 
@@ -55,7 +55,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- V0.5 Task 8 acceptance verification remains.
+- V0.5 acceptance closure documentation is pending commit.
 
 ## Current blockers
 
@@ -64,7 +64,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Next approved step
 
-No further synthetic-case work is approved. The fixture is frozen. V0.5 Task 6 is pending review; Task 7 investigator UI work requires separate approval. V1 — Controlled execution has not started and requires separate planning and approval.
+No further synthetic-case work is approved. The fixture is frozen. V0.5 acceptance verified all fourteen criteria with **257 passed, 1 skipped** automated tests and explicit local `llama3:8b` availability. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
 
 ## Architectural constraints
 
