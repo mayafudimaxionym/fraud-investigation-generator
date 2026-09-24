@@ -2,9 +2,11 @@ from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 
 from investigation.models import (
+    DIRECTION_PROVENANCE,
     PROPOSAL_STATUSES,
     AnalyticalActionProposal,
     HumanDecision,
+    InvestigationDirection,
     InvestigationRecord,
     apply_human_decision,
 )
@@ -40,6 +42,26 @@ def _decision(decision_type: str, **overrides: object) -> HumanDecision:
     return HumanDecision(**fields)  # type: ignore[arg-type]
 
 
+def _direction(**overrides: object) -> InvestigationDirection:
+    fields: dict[str, object] = {
+        "direction_id": "direction-001",
+        "investigation_id": "investigation-001",
+        "version": 1,
+        "competing_explanations": (
+            "The activity may reflect coordinated account takeover.",
+            "The activity may reflect legitimate shared access.",
+        ),
+        "plan_steps": (
+            "Review visible login and transfer records.",
+            "Compare the available relationship evidence.",
+        ),
+        "created_at": CREATED_AT,
+        "provenance": "INITIAL",
+    }
+    fields.update(overrides)
+    return InvestigationDirection(**fields)  # type: ignore[arg-type]
+
+
 def test_investigation_record_requires_identity_context_and_timestamps() -> None:
     record = InvestigationRecord(
         "investigation-001", "development-case-42", CREATED_AT, DECIDED_AT
@@ -53,6 +75,80 @@ def test_investigation_record_requires_identity_context_and_timestamps() -> None
         assert "investigation_id" in str(error)
     else:
         raise AssertionError("an investigation ID is required")
+
+
+def test_direction_accepts_an_ordered_initial_snapshot() -> None:
+    direction = _direction()
+
+    assert direction.competing_explanations == (
+        "The activity may reflect coordinated account takeover.",
+        "The activity may reflect legitimate shared access.",
+    )
+    assert direction.plan_steps == (
+        "Review visible login and transfer records.",
+        "Compare the available relationship evidence.",
+    )
+    assert direction.provenance == "INITIAL"
+
+
+def test_direction_requires_identity_positive_version_and_nonblank_text() -> None:
+    for field_name, value in (
+        ("direction_id", " "),
+        ("investigation_id", " "),
+        ("competing_explanations", (" ",)),
+        ("plan_steps", (" ",)),
+    ):
+        try:
+            _direction(**{field_name: value})
+        except ValueError as error:
+            assert field_name in str(error)
+        else:
+            raise AssertionError(f"{field_name} must be valid")
+
+    for version in (0, -1):
+        try:
+            _direction(version=version)
+        except ValueError as error:
+            assert "version" in str(error)
+        else:
+            raise AssertionError("version must be positive")
+
+
+def test_direction_requires_tuples_and_approved_provenance() -> None:
+    assert DIRECTION_PROVENANCE == ("INITIAL", "MODIFY", "DECLINE_REDIRECT")
+
+    try:
+        _direction(competing_explanations=["Not an immutable tuple"])
+    except ValueError as error:
+        assert "competing_explanations" in str(error)
+    else:
+        raise AssertionError("competing explanations must be immutable")
+
+    try:
+        _direction(provenance="RETRY")
+    except ValueError as error:
+        assert "provenance" in str(error)
+    else:
+        raise AssertionError("unapproved direction provenance must be rejected")
+
+
+def test_direction_rejects_blank_trigger_reference_and_is_immutable() -> None:
+    try:
+        _direction(trigger_reference_id=" ")
+    except ValueError as error:
+        assert "trigger_reference_id" in str(error)
+    else:
+        raise AssertionError("a supplied trigger reference must be nonblank")
+
+    direction = _direction(
+        provenance="MODIFY", trigger_reference_id="proposal-001"
+    )
+    try:
+        direction.version = 2  # type: ignore[misc]
+    except FrozenInstanceError:
+        pass
+    else:
+        raise AssertionError("direction records must be immutable")
 
 
 def test_proposal_requires_all_five_approved_fields() -> None:

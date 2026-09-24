@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop has **APPROVED product design and architecture**, but implementation has **NOT STARTED**. The current activity is documentation synchronization; application work must wait for documentation review and acceptance.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **IN PROGRESS**. Its approved documentation baseline is committed and pushed; Task 1 establishes the foundational `InvestigationDirection` domain contract locally, pending review and commit.
 
 ## Architecture baseline
 
@@ -16,7 +16,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - `AGENTS.md` provides standing AI-development instructions.
 - `ROADMAP.md` is the authoritative milestone and sequencing reference.
 - `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the approved V0 milestone specification; its implementation and formal acceptance are complete.
-- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Its application implementation has not started.
+- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Its implementation is in progress; only Task 1 domain-contract work is currently complete locally.
 - Future milestones still require separate planning and approval.
 - `docs/ARCHITECTURE.md` remains the architecture baseline, and the synthetic-case fixture remains frozen unless framework testing identifies a concrete requirement.
 
@@ -55,8 +55,8 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- This V0/V0.5 status, roadmap, and documentation synchronization awaits review and commit.
-- V0.5 documentation synchronization awaits review and acceptance; no V0.5 application code is authorized yet.
+- V0.5 Task 1 adds the immutable, textual, versioned `InvestigationDirection` domain contract and focused domain tests. This work awaits review and commit.
+- V0.5 persistence, safe package association, proposal-agent, lifecycle, and investigator UI work have not started.
 
 ## Current blockers
 
@@ -65,7 +65,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Next approved step
 
-No further synthetic-case work is approved. The fixture is frozen. V0.5 implementation may be planned only after its documentation is reviewed and accepted. V1 — Controlled execution has not started and requires separate planning and approval.
+No further synthetic-case work is approved. The fixture is frozen. V0.5 Task 2 — persistence and schema evolution — requires separate approval. V1 — Controlled execution has not started and requires separate planning and approval.
 
 ## Architectural constraints
 

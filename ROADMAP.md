@@ -35,9 +35,9 @@ Formal local acceptance verified governed case loading, local proposal generatio
 
 ## Current milestone
 
-### V0.5 — Investigator-Ready Investigation Loop — PRODUCT DESIGN APPROVED / ARCHITECTURE APPROVED / IMPLEMENTATION NOT STARTED
+### V0.5 — Investigator-Ready Investigation Loop — PRODUCT DESIGN APPROVED / ARCHITECTURE APPROVED / IMPLEMENTATION IN PROGRESS
 
-V0.5 improves the investigator-ready experience while preserving V0's governed local loop. It adds approved direction, navigation, Resume, objective, model-preflight, Attention/retry, and lifecycle documentation boundaries; it does not authorize analytical execution.
+V0.5 improves the investigator-ready experience while preserving V0's governed local loop. Its foundational `InvestigationDirection` domain contracts are implemented; persistence, orchestration, model/preflight, lifecycle, and investigator UI work remain future V0.5 tasks. It does not authorize analytical execution.
 
 ## Next milestones
 

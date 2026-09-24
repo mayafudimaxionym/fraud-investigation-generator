@@ -1,4 +1,4 @@
-"""Minimal, persistence-independent V0 investigation domain contracts."""
+"""Minimal, persistence-independent V0 and V0.5 investigation domain contracts."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from datetime import datetime
 
 PROPOSAL_STATUSES = ("PROPOSED", "APPROVED", "DECLINED", "MODIFIED")
 DECISION_TYPES = ("APPROVE", "MODIFY", "DECLINE")
+DIRECTION_PROVENANCE = ("INITIAL", "MODIFY", "DECLINE_REDIRECT")
 
 
 def _require_non_blank(value: str, field_name: str) -> None:
@@ -18,6 +19,13 @@ def _require_non_blank(value: str, field_name: str) -> None:
 def _require_timestamp(value: datetime, field_name: str) -> None:
     if not isinstance(value, datetime):
         raise ValueError(f"{field_name} must be a datetime")
+
+
+def _require_text_tuple(value: tuple[str, ...], field_name: str) -> None:
+    if not isinstance(value, tuple):
+        raise ValueError(f"{field_name} must be a tuple")
+    for item in value:
+        _require_non_blank(item, field_name)
 
 
 @dataclass(frozen=True)
@@ -34,6 +42,33 @@ class InvestigationRecord:
         _require_non_blank(self.case_reference, "case_reference")
         _require_timestamp(self.created_at, "created_at")
         _require_timestamp(self.updated_at, "updated_at")
+
+
+@dataclass(frozen=True)
+class InvestigationDirection:
+    """One versioned, provisional V0.5 investigation-direction snapshot."""
+
+    direction_id: str
+    investigation_id: str
+    version: int
+    competing_explanations: tuple[str, ...]
+    plan_steps: tuple[str, ...]
+    created_at: datetime
+    provenance: str
+    trigger_reference_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_blank(self.direction_id, "direction_id")
+        _require_non_blank(self.investigation_id, "investigation_id")
+        if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version <= 0:
+            raise ValueError("version must be a positive integer")
+        _require_text_tuple(self.competing_explanations, "competing_explanations")
+        _require_text_tuple(self.plan_steps, "plan_steps")
+        _require_timestamp(self.created_at, "created_at")
+        if self.provenance not in DIRECTION_PROVENANCE:
+            raise ValueError(f"provenance must be one of {DIRECTION_PROVENANCE}")
+        if self.trigger_reference_id is not None:
+            _require_non_blank(self.trigger_reference_id, "trigger_reference_id")
 
 
 @dataclass(frozen=True)
