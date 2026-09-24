@@ -557,6 +557,57 @@ def test_v05_metadata_preserves_blank_objective_and_safe_package_association(
         assert store.get_investigation(investigation.investigation_id) == investigation
 
 
+def test_store_associates_an_unassociated_investigation_without_changing_objective(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "investigations.sqlite"
+    investigation = InvestigationRecord(
+        "investigation-001",
+        "development-case-42",
+        BASE_TIME,
+        BASE_TIME,
+        "",
+        None,
+    )
+
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        associated = store.set_package_association_if_missing(
+            investigation.investigation_id, "development-case-42"
+        )
+
+        assert associated.objective == ""
+        assert associated.package_association == "development-case-42"
+
+
+def test_store_rejects_blank_or_replaced_package_associations(tmp_path: Path) -> None:
+    database_path = tmp_path / "investigations.sqlite"
+    investigation = _v05_investigation(package_association=None)
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        for association in ("", "   "):
+            try:
+                store.set_package_association_if_missing(
+                    investigation.investigation_id, association
+                )
+            except ValueError as error:
+                assert "package_association" in str(error)
+            else:
+                raise AssertionError("blank package associations must be rejected")
+
+        store.set_package_association_if_missing(
+            investigation.investigation_id, "development-case-42"
+        )
+        try:
+            store.set_package_association_if_missing(
+                investigation.investigation_id, "other-case"
+            )
+        except ValueError as error:
+            assert "already has" in str(error)
+        else:
+            raise AssertionError("package associations must not be silently replaced")
+
+
 def test_direction_history_preserves_version_and_text_order(tmp_path: Path) -> None:
     database_path = tmp_path / "investigations.sqlite"
     first = _direction()

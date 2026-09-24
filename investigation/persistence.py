@@ -95,6 +95,22 @@ class SQLiteInvestigationStore:
             raise ValueError("investigation does not exist")
         return _investigation_from_row(row)
 
+    def set_package_association_if_missing(
+        self, investigation_id: str, package_association: str
+    ) -> InvestigationRecord:
+        """Persist one explicit safe package association without replacing an existing one."""
+        if not isinstance(package_association, str) or not package_association.strip():
+            raise ValueError("package_association must be non-empty")
+        with self._connection:
+            investigation = self.get_investigation(investigation_id)
+            if investigation.package_association is not None:
+                raise ValueError("investigation already has a package association")
+            self._connection.execute(
+                "UPDATE investigations SET package_association = ? WHERE investigation_id = ?",
+                (package_association, investigation_id),
+            )
+        return self.get_investigation(investigation_id)
+
     def add_proposal(
         self, investigation_id: str, proposal: AnalyticalActionProposal
     ) -> None:
