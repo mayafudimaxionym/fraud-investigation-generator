@@ -2,6 +2,9 @@ from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 
 from investigation.models import (
+    AGENT_OPERATION_STATUSES,
+    AGENT_OPERATION_TYPES,
+    AgentOperation,
     DIRECTION_PROVENANCE,
     PROPOSAL_STATUSES,
     AnalyticalActionProposal,
@@ -9,6 +12,7 @@ from investigation.models import (
     InvestigationDirection,
     InvestigationRecord,
     apply_human_decision,
+    transition_agent_operation,
 )
 
 
@@ -60,6 +64,19 @@ def _direction(**overrides: object) -> InvestigationDirection:
     }
     fields.update(overrides)
     return InvestigationDirection(**fields)  # type: ignore[arg-type]
+
+
+def _operation(**overrides: object) -> AgentOperation:
+    fields: dict[str, object] = {
+        "operation_id": "operation-001",
+        "investigation_id": "investigation-001",
+        "operation_type": "START",
+        "status": "PENDING_RENDER",
+        "created_at": CREATED_AT,
+        "updated_at": CREATED_AT,
+    }
+    fields.update(overrides)
+    return AgentOperation(**fields)  # type: ignore[arg-type]
 
 
 def test_investigation_record_requires_identity_context_and_timestamps() -> None:
@@ -163,6 +180,57 @@ def test_direction_rejects_blank_trigger_reference_and_is_immutable() -> None:
         pass
     else:
         raise AssertionError("direction records must be immutable")
+
+
+def test_agent_operation_requires_approved_type_status_and_trigger_shape() -> None:
+    assert AGENT_OPERATION_TYPES == (
+        "START", "MODIFY", "DECLINE_REDIRECT", "DECLINE_RECONSIDER"
+    )
+    assert AGENT_OPERATION_STATUSES == (
+        "PENDING_RENDER", "RUNNING", "COMPLETED", "FAILED", "INTERRUPTED"
+    )
+    assert _operation().status == "PENDING_RENDER"
+
+    for field_name, value in (("operation_type", "QUERY"), ("status", "QUEUED")):
+        try:
+            _operation(**{field_name: value})
+        except ValueError as error:
+            assert field_name in str(error)
+        else:
+            raise AssertionError(f"{field_name} must be approved")
+
+    for overrides in (
+        {"operation_type": "START", "triggering_proposal_id": "proposal-001"},
+        {"operation_type": "MODIFY"},
+        {"status": "RUNNING"},
+        {"status": "PENDING_RENDER", "runner_instance_id": "runner-001"},
+    ):
+        try:
+            _operation(**overrides)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid operation references/state must be rejected")
+
+
+def test_agent_operation_allows_only_the_approved_lifecycle_transitions() -> None:
+    pending = _operation()
+    running = transition_agent_operation(
+        pending, "RUNNING", DECIDED_AT, runner_instance_id="runner-001"
+    )
+    completed = transition_agent_operation(
+        running, "COMPLETED", DECIDED_AT, runner_instance_id="runner-001"
+    )
+    assert running.runner_instance_id == "runner-001"
+    assert completed.status == "COMPLETED"
+
+    for source, target in ((pending, "COMPLETED"), (completed, "RUNNING")):
+        try:
+            transition_agent_operation(source, target, DECIDED_AT)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("terminal/reset operation transition must be rejected")
 
 
 def test_proposal_requires_all_five_approved_fields() -> None:

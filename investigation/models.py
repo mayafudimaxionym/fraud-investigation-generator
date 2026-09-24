@@ -9,6 +9,22 @@ from datetime import datetime
 PROPOSAL_STATUSES = ("PROPOSED", "APPROVED", "DECLINED", "MODIFIED")
 DECISION_TYPES = ("APPROVE", "MODIFY", "DECLINE")
 DIRECTION_PROVENANCE = ("INITIAL", "MODIFY", "DECLINE_REDIRECT")
+AGENT_OPERATION_TYPES = ("START", "MODIFY", "DECLINE_REDIRECT", "DECLINE_RECONSIDER")
+AGENT_OPERATION_STATUSES = (
+    "PENDING_RENDER",
+    "RUNNING",
+    "COMPLETED",
+    "FAILED",
+    "INTERRUPTED",
+)
+
+_AGENT_OPERATION_TRANSITIONS = {
+    "PENDING_RENDER": ("RUNNING",),
+    "RUNNING": ("COMPLETED", "FAILED", "INTERRUPTED"),
+    "COMPLETED": (),
+    "FAILED": (),
+    "INTERRUPTED": (),
+}
 
 
 def _require_non_blank(value: str, field_name: str) -> None:
@@ -75,6 +91,80 @@ class InvestigationDirection:
             raise ValueError(f"provenance must be one of {DIRECTION_PROVENANCE}")
         if self.trigger_reference_id is not None:
             _require_non_blank(self.trigger_reference_id, "trigger_reference_id")
+
+
+@dataclass(frozen=True)
+class AgentOperation:
+    """One narrowly scoped durable V0.5 local-model dispatch operation."""
+
+    operation_id: str
+    investigation_id: str
+    operation_type: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    triggering_proposal_id: str | None = None
+    triggering_decision_id: str | None = None
+    prior_attempt_operation_id: str | None = None
+    runner_instance_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_blank(self.operation_id, "operation_id")
+        _require_non_blank(self.investigation_id, "investigation_id")
+        if self.operation_type not in AGENT_OPERATION_TYPES:
+            raise ValueError(f"operation_type must be one of {AGENT_OPERATION_TYPES}")
+        if self.status not in AGENT_OPERATION_STATUSES:
+            raise ValueError(f"status must be one of {AGENT_OPERATION_STATUSES}")
+        _require_timestamp(self.created_at, "created_at")
+        _require_timestamp(self.updated_at, "updated_at")
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at must not precede created_at")
+        for field_name in (
+            "triggering_proposal_id",
+            "triggering_decision_id",
+            "prior_attempt_operation_id",
+            "runner_instance_id",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_non_blank(value, field_name)
+        if self.prior_attempt_operation_id == self.operation_id:
+            raise ValueError("prior_attempt_operation_id must differ from operation_id")
+        if self.operation_type == "START":
+            if self.triggering_proposal_id is not None or self.triggering_decision_id is not None:
+                raise ValueError("START must not reference a proposal or decision")
+        elif self.triggering_proposal_id is None or self.triggering_decision_id is None:
+            raise ValueError(f"{self.operation_type} requires proposal and decision references")
+        if self.status == "PENDING_RENDER" and self.runner_instance_id is not None:
+            raise ValueError("PENDING_RENDER must not have a runner_instance_id")
+        if self.status == "RUNNING" and self.runner_instance_id is None:
+            raise ValueError("RUNNING requires a runner_instance_id")
+
+
+def transition_agent_operation(
+    operation: AgentOperation,
+    status: str,
+    updated_at: datetime,
+    *,
+    runner_instance_id: str | None = None,
+) -> AgentOperation:
+    """Return one legal immutable operation transition without persistence."""
+    _require_timestamp(updated_at, "updated_at")
+    if updated_at < operation.updated_at:
+        raise ValueError("updated_at must not precede the operation's current updated_at")
+    if status not in _AGENT_OPERATION_TRANSITIONS[operation.status]:
+        raise ValueError(f"cannot transition {operation.status} operation to {status}")
+    if status == "RUNNING":
+        _require_non_blank(runner_instance_id, "runner_instance_id")
+        return replace(
+            operation,
+            status=status,
+            updated_at=updated_at,
+            runner_instance_id=runner_instance_id,
+        )
+    if runner_instance_id is not None and runner_instance_id != operation.runner_instance_id:
+        raise ValueError("runner_instance_id must match the claimed operation")
+    return replace(operation, status=status, updated_at=updated_at)
 
 
 @dataclass(frozen=True)
