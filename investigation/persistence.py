@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from investigation.models import (
     PROPOSAL_STATUSES,
     AnalyticalActionProposal,
     HumanDecision,
+    InvestigationDirection,
     InvestigationRecord,
     apply_human_decision,
 )
@@ -21,6 +23,7 @@ _DECISION_STATUS = {
     "DECLINE": "DECLINED",
     "MODIFY": "MODIFIED",
 }
+_SCHEMA_VERSION = 1
 
 
 class SQLiteInvestigationStore:
@@ -61,6 +64,29 @@ class SQLiteInvestigationStore:
         except sqlite3.IntegrityError as error:
             raise ValueError("persistence integrity constraint failed") from error
 
+    def add_investigation_with_initial_direction_and_proposal(
+        self,
+        investigation: InvestigationRecord,
+        direction: InvestigationDirection,
+        proposal: AnalyticalActionProposal,
+    ) -> None:
+        """Atomically persist the initial V0.5 investigation state."""
+        if investigation.objective is None:
+            raise ValueError("V0.5 investigation requires an objective")
+        if investigation.package_association is None:
+            raise ValueError("V0.5 investigation requires a package association")
+        if direction.investigation_id != investigation.investigation_id:
+            raise ValueError("initial direction must belong to the investigation")
+        if direction.version != 1:
+            raise ValueError("initial direction must have version 1")
+        try:
+            with self._connection:
+                self._insert_investigation(investigation)
+                self._insert_direction(direction)
+                self._insert_proposal(investigation.investigation_id, proposal)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+
     def get_investigation(self, investigation_id: str) -> InvestigationRecord:
         row = self._connection.execute(
             "SELECT * FROM investigations WHERE investigation_id = ?", (investigation_id,)
@@ -77,6 +103,41 @@ class SQLiteInvestigationStore:
                 self._insert_proposal(investigation_id, proposal)
         except sqlite3.IntegrityError as error:
             raise ValueError("persistence integrity constraint failed") from error
+
+    def add_direction(self, direction: InvestigationDirection) -> None:
+        """Append one immutable V0.5 investigation-direction version."""
+        try:
+            with self._connection:
+                self._insert_direction(direction)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+
+    def list_investigations(self) -> tuple[InvestigationRecord, ...]:
+        """Return investigations in deterministic most-recent-first order."""
+        rows = self._connection.execute(
+            "SELECT * FROM investigations ORDER BY updated_at DESC, investigation_id"
+        ).fetchall()
+        return tuple(_investigation_from_row(row) for row in rows)
+
+    def list_directions(self, investigation_id: str) -> tuple[InvestigationDirection, ...]:
+        """Return append-only direction history in ascending version order."""
+        rows = self._connection.execute(
+            "SELECT * FROM investigation_directions "
+            "WHERE investigation_id = ? ORDER BY version, direction_id",
+            (investigation_id,),
+        ).fetchall()
+        return tuple(_direction_from_row(row) for row in rows)
+
+    def get_current_direction(
+        self, investigation_id: str
+    ) -> InvestigationDirection | None:
+        """Return the highest persisted direction version, if any."""
+        row = self._connection.execute(
+            "SELECT * FROM investigation_directions WHERE investigation_id = ? "
+            "ORDER BY version DESC, direction_id DESC LIMIT 1",
+            (investigation_id,),
+        ).fetchone()
+        return _direction_from_row(row) if row is not None else None
 
     def persist_human_decision(
         self,
@@ -146,14 +207,37 @@ class SQLiteInvestigationStore:
         self._connection.execute(
             """
             INSERT INTO investigations (
-                investigation_id, case_reference, created_at, updated_at
-            ) VALUES (?, ?, ?, ?)
+                investigation_id, case_reference, created_at, updated_at,
+                objective, package_association
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 investigation.investigation_id,
                 investigation.case_reference,
                 _serialize_timestamp(investigation.created_at),
                 _serialize_timestamp(investigation.updated_at),
+                investigation.objective,
+                investigation.package_association,
+            ),
+        )
+
+    def _insert_direction(self, direction: InvestigationDirection) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO investigation_directions (
+                direction_id, investigation_id, version, competing_explanations_json,
+                plan_steps_json, created_at, provenance, trigger_reference_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                direction.direction_id,
+                direction.investigation_id,
+                direction.version,
+                json.dumps(direction.competing_explanations),
+                json.dumps(direction.plan_steps),
+                _serialize_timestamp(direction.created_at),
+                direction.provenance,
+                direction.trigger_reference_id,
             ),
         )
 
@@ -284,6 +368,87 @@ class SQLiteInvestigationStore:
             );
             """
         )
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        version = self._connection.execute("PRAGMA user_version").fetchone()[0]
+        if version > _SCHEMA_VERSION:
+            raise ValueError("database schema version is newer than supported")
+        investigation_columns = self._table_columns("investigations")
+        required_investigation_columns = {
+            "investigation_id",
+            "case_reference",
+            "created_at",
+            "updated_at",
+        }
+        if not required_investigation_columns <= investigation_columns:
+            raise ValueError("investigations schema is incomplete")
+        with self._connection:
+            if "objective" not in investigation_columns:
+                self._connection.execute("ALTER TABLE investigations ADD COLUMN objective TEXT")
+            if "package_association" not in investigation_columns:
+                self._connection.execute(
+                    "ALTER TABLE investigations ADD COLUMN package_association TEXT"
+                )
+            self._ensure_direction_schema()
+            self._connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+
+    def _ensure_direction_schema(self) -> None:
+        direction_columns = self._table_columns("investigation_directions")
+        if not direction_columns:
+            self._connection.execute(
+                """
+                CREATE TABLE investigation_directions (
+                    direction_id TEXT PRIMARY KEY,
+                    investigation_id TEXT NOT NULL,
+                    version INTEGER NOT NULL CHECK (version > 0),
+                    competing_explanations_json TEXT NOT NULL,
+                    plan_steps_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    provenance TEXT NOT NULL CHECK (
+                        provenance IN ('INITIAL', 'MODIFY', 'DECLINE_REDIRECT')
+                    ),
+                    trigger_reference_id TEXT,
+                    UNIQUE (investigation_id, version),
+                    FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id)
+                )
+                """
+            )
+            return
+        required_direction_columns = {
+            "direction_id",
+            "investigation_id",
+            "version",
+            "competing_explanations_json",
+            "plan_steps_json",
+            "created_at",
+            "provenance",
+            "trigger_reference_id",
+        }
+        if not required_direction_columns <= direction_columns:
+            raise ValueError("investigation directions schema is incomplete")
+        unique_version_indexes = (
+            row
+            for row in self._connection.execute("PRAGMA index_list(investigation_directions)")
+            if row["unique"]
+        )
+        if not any(
+            tuple(
+                index_column["name"]
+                for index_column in self._connection.execute(
+                    f"PRAGMA index_info({row['name']})"
+                )
+            )
+            == ("investigation_id", "version")
+            for row in unique_version_indexes
+        ):
+            raise ValueError("investigation directions schema is incomplete")
+
+    def _table_columns(self, table_name: str) -> set[str]:
+        return {
+            row["name"]
+            for row in self._connection.execute(f"PRAGMA table_info({table_name})")
+        }
 
 
 def _serialize_timestamp(value: datetime) -> str:
@@ -300,6 +465,8 @@ def _investigation_from_row(row: sqlite3.Row) -> InvestigationRecord:
         row["case_reference"],
         _deserialize_timestamp(row["created_at"]),
         _deserialize_timestamp(row["updated_at"]),
+        row["objective"],
+        row["package_association"],
     )
 
 
@@ -324,4 +491,17 @@ def _decision_from_row(row: sqlite3.Row) -> HumanDecision:
         row["decision_type"],
         _deserialize_timestamp(row["decided_at"]),
         row["instruction_or_reason"],
+    )
+
+
+def _direction_from_row(row: sqlite3.Row) -> InvestigationDirection:
+    return InvestigationDirection(
+        row["direction_id"],
+        row["investigation_id"],
+        row["version"],
+        tuple(json.loads(row["competing_explanations_json"])),
+        tuple(json.loads(row["plan_steps_json"])),
+        _deserialize_timestamp(row["created_at"]),
+        row["provenance"],
+        row["trigger_reference_id"],
     )

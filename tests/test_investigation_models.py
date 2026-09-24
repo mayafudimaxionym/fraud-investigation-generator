@@ -77,6 +77,20 @@ def test_investigation_record_requires_identity_context_and_timestamps() -> None
         raise AssertionError("an investigation ID is required")
 
 
+def test_investigation_record_distinguishes_legacy_metadata_from_blank_objective() -> None:
+    legacy = InvestigationRecord(
+        "investigation-legacy", "development-case-42", CREATED_AT, DECIDED_AT
+    )
+    v05 = InvestigationRecord(
+        "investigation-v05", "development-case-42", CREATED_AT, DECIDED_AT, "", "case-42"
+    )
+
+    assert legacy.objective is None
+    assert legacy.package_association is None
+    assert v05.objective == ""
+    assert v05.package_association == "case-42"
+
+
 def test_direction_accepts_an_ordered_initial_snapshot() -> None:
     direction = _direction()
 

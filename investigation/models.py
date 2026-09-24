@@ -30,18 +30,24 @@ def _require_text_tuple(value: tuple[str, ...], field_name: str) -> None:
 
 @dataclass(frozen=True)
 class InvestigationRecord:
-    """The V0 identity and context for a proposal and decision trail."""
+    """The V0.5 identity, context, and optional governed package metadata."""
 
     investigation_id: str
     case_reference: str
     created_at: datetime
     updated_at: datetime
+    objective: str | None = None
+    package_association: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_blank(self.investigation_id, "investigation_id")
         _require_non_blank(self.case_reference, "case_reference")
         _require_timestamp(self.created_at, "created_at")
         _require_timestamp(self.updated_at, "updated_at")
+        if self.objective is not None and not isinstance(self.objective, str):
+            raise ValueError("objective must be a string or None")
+        if self.package_association is not None:
+            _require_non_blank(self.package_association, "package_association")
 
 
 @dataclass(frozen=True)
