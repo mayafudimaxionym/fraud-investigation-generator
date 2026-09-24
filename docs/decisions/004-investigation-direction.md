@@ -14,4 +14,4 @@ An investigator must be able to resume an investigation, understand its current 
 
 ## Consequence
 
-The current direction supports investigation continuity and minimal provenance while leaving the existing single proposed next action as the only authorization candidate. It is not a formal Hypothesis, Finding, Evidence, confidence score, executable task, institutional-memory record, or general provenance graph. Formal knowledge modeling remains deferred.
+The current direction supports investigation continuity and minimal provenance while leaving the existing single proposed next action as the only authorization candidate. Modify retains proposal revision lineage. A successful decline reconsideration instead retains a narrow persisted decline-decision-to-independent-replacement association for restart-safe provenance and retry idempotency; it is not proposal revision lineage or a general provenance graph. Direction is not a formal Hypothesis, Finding, Evidence, confidence score, executable task, or institutional-memory record. Formal knowledge modeling remains deferred.

@@ -61,19 +61,27 @@ class ConfiguredCaseCatalog:
 
     def available_cases(self) -> tuple[AvailableInvestigatorCase, ...]:
         """Return only safe metadata for the fixed configured cases."""
-        return tuple(
+        return tuple(self.load_case(case.association_id)[0] for case in self._cases)
+
+    def load_case(
+        self, association_id: str
+    ) -> tuple[AvailableInvestigatorCase, InvestigatorPackageContext]:
+        """Resolve one configured association to safe metadata and governed context."""
+        case = self._configured_case(association_id)
+        context = load_investigator_package(case.package_directory)
+        return (
             AvailableInvestigatorCase(
                 association_id=case.association_id,
                 case_reference=case.case_reference,
                 domain=case.domain,
-                datasets=self.load_context(case.association_id).datasets,
-            )
-            for case in self._cases
+                datasets=context.datasets,
+            ),
+            context,
         )
 
     def load_context(self, association_id: str) -> InvestigatorPackageContext:
         """Load a configured package through the existing governed loader."""
-        return load_investigator_package(self._configured_case(association_id).package_directory)
+        return self.load_case(association_id)[1]
 
     def _configured_case(self, association_id: str) -> ConfiguredCasePackage:
         _require_non_blank(association_id, "association_id")

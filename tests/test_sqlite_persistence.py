@@ -9,6 +9,7 @@ from investigation.models import (
     InvestigationRecord,
 )
 from investigation.persistence import SQLiteInvestigationStore
+from investigation.persistence import DeclineReconsiderationResult
 
 
 BASE_TIME = datetime(2026, 9, 23, 9, 0, tzinfo=timezone.utc)
@@ -178,13 +179,17 @@ def test_fresh_database_creates_v05_schema(tmp_path: Path) -> None:
         direction_table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'investigation_directions'"
         ).fetchone()
+        result_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'decline_reconsideration_results'"
+        ).fetchone()
         schema_version = connection.execute("PRAGMA user_version").fetchone()[0]
     finally:
         connection.close()
 
     assert {"objective", "package_association"} <= columns
     assert direction_table is not None
-    assert schema_version == 1
+    assert result_table is not None
+    assert schema_version == 2
 
 
 def test_v0_schema_migrates_idempotently_without_losing_history(tmp_path: Path) -> None:
@@ -281,12 +286,12 @@ def test_v0_schema_migrates_idempotently_without_losing_history(tmp_path: Path) 
         )
         assert migrated.list_decisions(legacy.investigation_id) == (decision,)
         assert migrated.get_current_direction(legacy.investigation_id) is None
-    assert _schema_version(database_path) == 1
+    assert _schema_version(database_path) == 2
 
     with SQLiteInvestigationStore(database_path) as reopened:
         assert reopened.get_investigation(legacy.investigation_id) == legacy
         assert reopened.list_proposals(legacy.investigation_id)[1] == revised
-    assert _schema_version(database_path) == 1
+    assert _schema_version(database_path) == 2
 
 
 def test_misleading_current_user_version_repairs_a_v0_shaped_schema(tmp_path: Path) -> None:
@@ -315,7 +320,7 @@ def test_misleading_current_user_version_repairs_a_v0_shaped_schema(tmp_path: Pa
 
     assert {"objective", "package_association"} <= columns
     assert direction_table is not None
-    assert _schema_version(database_path) == 1
+    assert _schema_version(database_path) == 2
 
 
 def test_failed_migration_does_not_advance_schema_version(tmp_path: Path) -> None:
@@ -745,3 +750,162 @@ def test_investigation_listing_is_deterministically_most_recent_first(tmp_path: 
         store.add_investigation(later)
 
         assert store.list_investigations() == (later, earlier)
+
+
+def test_v05_modify_direction_and_revision_are_one_atomic_write(tmp_path: Path) -> None:
+    database_path = tmp_path / "modify-direction.sqlite"
+    investigation = _v05_investigation()
+    original = _proposal()
+    duplicate = _proposal("proposal-duplicate")
+    decision = _decision("MODIFY", instruction_or_reason="Focus on visible events.")
+    direction = _direction("direction-002", version=2, provenance="MODIFY", trigger_reference_id=decision.decision_id)
+    revised = AnalyticalActionProposal(
+        duplicate.proposal_id, "Revised action.", original.purpose, original.why_now,
+        original.data_to_be_used, original.expected_output, "PROPOSED",
+        BASE_TIME + timedelta(minutes=4), original.proposal_id,
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_direction(_direction())
+        store.add_proposal(investigation.investigation_id, original)
+        store.add_proposal(investigation.investigation_id, duplicate)
+        try:
+            store.persist_modify_with_optional_direction(original, decision, revised, direction)
+        except ValueError as error:
+            assert "integrity" in str(error)
+        else:
+            raise AssertionError("duplicate revision ID must fail inside the transaction")
+        assert store.list_proposals(investigation.investigation_id)[0].status == "PROPOSED"
+        assert store.list_decisions(investigation.investigation_id) == ()
+        assert store.list_directions(investigation.investigation_id) == (_direction(),)
+
+
+def test_v05_reconsideration_direction_proposal_and_result_are_one_atomic_write(tmp_path: Path) -> None:
+    database_path = tmp_path / "reconsideration.sqlite"
+    investigation = _v05_investigation()
+    existing = _proposal("proposal-existing")
+    replacement = _proposal("proposal-existing")
+    direction = _direction("direction-002", version=2, provenance="DECLINE_REDIRECT", trigger_reference_id="decision-001")
+    decision = _decision(
+        "DECLINE", proposal_id=existing.proposal_id,
+        instruction_or_reason="Use a different approach.",
+    )
+    result = DeclineReconsiderationResult(
+        decision.decision_id, replacement.proposal_id, BASE_TIME + timedelta(minutes=3)
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_direction(_direction())
+        store.add_proposal(investigation.investigation_id, existing)
+        store.persist_human_decision(existing, decision)
+        try:
+            store.add_decline_reconsideration_result(
+                investigation.investigation_id, direction, replacement, result
+            )
+        except ValueError as error:
+            assert "integrity" in str(error)
+        else:
+            raise AssertionError("duplicate replacement ID must fail inside the transaction")
+        assert store.list_directions(investigation.investigation_id) == (_direction(),)
+        assert store.list_proposals(investigation.investigation_id) == (
+            AnalyticalActionProposal(
+                existing.proposal_id, existing.action, existing.purpose, existing.why_now,
+                existing.data_to_be_used, existing.expected_output, "DECLINED", existing.created_at,
+            ),
+        )
+        assert store.get_decline_reconsideration_result(decision.decision_id) is None
+
+
+def test_v05_modify_direction_must_belong_to_the_proposal_investigation(tmp_path: Path) -> None:
+    database_path = tmp_path / "modify-wrong-direction.sqlite"
+    investigation = _v05_investigation()
+    other = _v05_investigation("investigation-other")
+    original = _proposal()
+    decision = _decision("MODIFY", instruction_or_reason="Focus on visible events.")
+    revised = AnalyticalActionProposal(
+        "proposal-revised", "Revised action.", original.purpose, original.why_now,
+        original.data_to_be_used, original.expected_output, "PROPOSED",
+        BASE_TIME + timedelta(minutes=4), original.proposal_id,
+    )
+    wrong_direction = _direction(
+        "direction-other", investigation_id=other.investigation_id, version=1,
+        provenance="MODIFY", trigger_reference_id=decision.decision_id,
+    )
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_investigation(other)
+        store.add_direction(_direction())
+        store.add_proposal(investigation.investigation_id, original)
+        try:
+            store.persist_modify_with_optional_direction(original, decision, revised, wrong_direction)
+        except ValueError as error:
+            assert "proposal investigation" in str(error)
+        else:
+            raise AssertionError("a Modify direction must belong to the proposal investigation")
+        assert store.list_proposals(investigation.investigation_id) == (original,)
+        assert store.list_decisions(investigation.investigation_id) == ()
+
+
+def test_decline_reconsideration_result_requires_decline_and_independent_same_case_replacement(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "result-integrity.sqlite"
+    investigation = _v05_investigation()
+    source = _proposal("proposal-source")
+    decision = _decision("APPROVE", proposal_id=source.proposal_id)
+    replacement = _proposal("proposal-replacement")
+    result = DeclineReconsiderationResult(decision.decision_id, replacement.proposal_id, BASE_TIME)
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_proposal(investigation.investigation_id, source)
+        store.persist_human_decision(source, decision)
+        try:
+            store.add_decline_reconsideration_result(investigation.investigation_id, None, replacement, result)
+        except ValueError as error:
+            assert "DECLINE" in str(error)
+        else:
+            raise AssertionError("only a DECLINE decision may produce a reconsideration result")
+        assert store.list_proposals(investigation.investigation_id) == (
+            AnalyticalActionProposal(
+                source.proposal_id, source.action, source.purpose, source.why_now,
+                source.data_to_be_used, source.expected_output, "APPROVED", source.created_at,
+            ),
+        )
+        assert store.get_decline_reconsideration_result(decision.decision_id) is None
+
+
+def test_decline_reconsideration_result_is_unique_by_decision_and_replacement(tmp_path: Path) -> None:
+    database_path = tmp_path / "result-unique.sqlite"
+    investigation = _v05_investigation()
+    first = _proposal("proposal-first")
+    second = _proposal("proposal-second")
+    first_decision = _decision("DECLINE", proposal_id=first.proposal_id, decision_id="decision-first")
+    second_decision = _decision("DECLINE", proposal_id=second.proposal_id, decision_id="decision-second")
+    replacement = _proposal("proposal-replacement")
+    result = DeclineReconsiderationResult(first_decision.decision_id, replacement.proposal_id, BASE_TIME)
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_proposal(investigation.investigation_id, first)
+        store.persist_human_decision(first, first_decision)
+        store.add_proposal(investigation.investigation_id, second)
+        store.persist_human_decision(second, second_decision)
+        store.add_decline_reconsideration_result(investigation.investigation_id, None, replacement, result)
+        another = _proposal("proposal-another")
+        duplicate_decision = DeclineReconsiderationResult(first_decision.decision_id, another.proposal_id, BASE_TIME)
+        try:
+            store.add_decline_reconsideration_result(investigation.investigation_id, None, another, duplicate_decision)
+        except ValueError as error:
+            assert "integrity" in str(error)
+        else:
+            raise AssertionError("one decline decision must have at most one replacement")
+        assert all(proposal.proposal_id != another.proposal_id for proposal in store.list_proposals(investigation.investigation_id))
+        try:
+            with store._connection:
+                store._connection.execute(
+                    "INSERT INTO decline_reconsideration_results VALUES (?, ?, ?)",
+                    (second_decision.decision_id, replacement.proposal_id, BASE_TIME.isoformat()),
+                )
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise AssertionError("one replacement proposal must have at most one decline result")

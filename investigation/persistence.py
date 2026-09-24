@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import sqlite3
 import json
+import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -23,7 +24,16 @@ _DECISION_STATUS = {
     "DECLINE": "DECLINED",
     "MODIFY": "MODIFIED",
 }
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
+
+
+@dataclass(frozen=True)
+class DeclineReconsiderationResult:
+    """Restart-safe provenance for one successful independent decline replacement."""
+
+    decline_decision_id: str
+    replacement_proposal_id: str
+    created_at: datetime
 
 
 class SQLiteInvestigationStore:
@@ -127,6 +137,72 @@ class SQLiteInvestigationStore:
                 self._insert_direction(direction)
         except sqlite3.IntegrityError as error:
             raise ValueError("persistence integrity constraint failed") from error
+
+    def persist_modify_with_optional_direction(
+        self,
+        proposal: AnalyticalActionProposal,
+        decision: HumanDecision,
+        revised_proposal: AnalyticalActionProposal,
+        direction: InvestigationDirection | None = None,
+    ) -> tuple[AnalyticalActionProposal, ...]:
+        """Atomically persist one Modify decision, revision, and optional direction."""
+        transitioned = apply_human_decision(proposal, decision, revised_proposal)
+        try:
+            with self._connection:
+                stored = _proposal_from_row(self._proposal_row(proposal.proposal_id))
+                if stored != proposal:
+                    raise ValueError("stored proposal must match the PROPOSED proposal")
+                parent = self._proposal_row(proposal.proposal_id)
+                self._connection.execute(
+                    "UPDATE proposals SET status = ? WHERE proposal_id = ?",
+                    (transitioned[0].status, proposal.proposal_id),
+                )
+                self._insert_decision(decision)
+                if direction is not None:
+                    if direction.investigation_id != parent["investigation_id"]:
+                        raise ValueError("direction must belong to the proposal investigation")
+                    self._require_next_direction_version(direction)
+                    self._insert_direction(direction)
+                self._insert_proposal(parent["investigation_id"], revised_proposal)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+        return transitioned
+
+    def add_decline_reconsideration_result(
+        self,
+        investigation_id: str,
+        direction: InvestigationDirection | None,
+        proposal: AnalyticalActionProposal,
+        result: DeclineReconsiderationResult,
+    ) -> None:
+        """Atomically persist a decline replacement, optional direction, and its provenance."""
+        try:
+            with self._connection:
+                if direction is not None:
+                    if direction.investigation_id != investigation_id:
+                        raise ValueError("direction must belong to the investigation")
+                    self._require_next_direction_version(direction)
+                    self._insert_direction(direction)
+                self._insert_proposal(investigation_id, proposal)
+                self._insert_decline_reconsideration_result(result, investigation_id)
+        except sqlite3.IntegrityError as error:
+            raise ValueError("persistence integrity constraint failed") from error
+
+    def get_decline_reconsideration_result(
+        self, decline_decision_id: str
+    ) -> DeclineReconsiderationResult | None:
+        """Return the one successful replacement associated with this decline, if any."""
+        row = self._connection.execute(
+            "SELECT * FROM decline_reconsideration_results WHERE decline_decision_id = ?",
+            (decline_decision_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return DeclineReconsiderationResult(
+            row["decline_decision_id"],
+            row["replacement_proposal_id"],
+            _deserialize_timestamp(row["created_at"]),
+        )
 
     def list_investigations(self) -> tuple[InvestigationRecord, ...]:
         """Return investigations in deterministic most-recent-first order."""
@@ -276,6 +352,45 @@ class SQLiteInvestigationStore:
             ),
         )
 
+    def _insert_decline_reconsideration_result(
+        self,
+        result: DeclineReconsiderationResult,
+        investigation_id: str,
+    ) -> None:
+        decision = self._connection.execute(
+            """
+            SELECT decisions.decision_type, proposals.investigation_id
+            FROM decisions JOIN proposals ON proposals.proposal_id = decisions.proposal_id
+            WHERE decisions.decision_id = ?
+            """,
+            (result.decline_decision_id,),
+        ).fetchone()
+        if decision is None or decision["decision_type"] != "DECLINE":
+            raise ValueError("decline reconsideration result requires a DECLINE decision")
+        proposal = self._proposal_row(result.replacement_proposal_id)
+        if decision["investigation_id"] != investigation_id or proposal["investigation_id"] != investigation_id:
+            raise ValueError("decline reconsideration result must remain in one investigation")
+        if proposal["status"] != "PROPOSED" or proposal["revised_from_proposal_id"] is not None:
+            raise ValueError("decline replacement must be an independent PROPOSED proposal")
+        self._connection.execute(
+            """
+            INSERT INTO decline_reconsideration_results (
+                decline_decision_id, replacement_proposal_id, created_at
+            ) VALUES (?, ?, ?)
+            """,
+            (
+                result.decline_decision_id,
+                result.replacement_proposal_id,
+                _serialize_timestamp(result.created_at),
+            ),
+        )
+
+    def _require_next_direction_version(self, direction: InvestigationDirection) -> None:
+        current = self.get_current_direction(direction.investigation_id)
+        expected_version = 1 if current is None else current.version + 1
+        if direction.version != expected_version:
+            raise ValueError("direction version must follow the persisted current direction")
+
     def list_proposals(self, investigation_id: str) -> tuple[AnalyticalActionProposal, ...]:
         rows = self._connection.execute(
             """
@@ -407,6 +522,7 @@ class SQLiteInvestigationStore:
                     "ALTER TABLE investigations ADD COLUMN package_association TEXT"
                 )
             self._ensure_direction_schema()
+            self._ensure_decline_reconsideration_schema()
             self._connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
     def _ensure_direction_schema(self) -> None:
@@ -459,6 +575,48 @@ class SQLiteInvestigationStore:
             for row in unique_version_indexes
         ):
             raise ValueError("investigation directions schema is incomplete")
+
+    def _ensure_decline_reconsideration_schema(self) -> None:
+        columns = self._table_columns("decline_reconsideration_results")
+        if not columns:
+            self._connection.execute(
+                """
+                CREATE TABLE decline_reconsideration_results (
+                    decline_decision_id TEXT PRIMARY KEY,
+                    replacement_proposal_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (decline_decision_id) REFERENCES decisions(decision_id),
+                    FOREIGN KEY (replacement_proposal_id) REFERENCES proposals(proposal_id)
+                )
+                """
+            )
+            return
+        required = {"decline_decision_id", "replacement_proposal_id", "created_at"}
+        if not required <= columns:
+            raise ValueError("decline reconsideration results schema is incomplete")
+        unique_columns = {
+            tuple(
+                index_column["name"]
+                for index_column in self._connection.execute(
+                    f"PRAGMA index_info({row['name']})"
+                )
+            )
+            for row in self._connection.execute("PRAGMA index_list(decline_reconsideration_results)")
+            if row["unique"]
+        }
+        if not {("decline_decision_id",), ("replacement_proposal_id",)} <= unique_columns:
+            raise ValueError("decline reconsideration results schema is incomplete")
+        foreign_keys = {
+            (row["from"], row["table"], row["to"])
+            for row in self._connection.execute(
+                "PRAGMA foreign_key_list(decline_reconsideration_results)"
+            )
+        }
+        if not {
+            ("decline_decision_id", "decisions", "decision_id"),
+            ("replacement_proposal_id", "proposals", "proposal_id"),
+        } <= foreign_keys:
+            raise ValueError("decline reconsideration results schema is incomplete")
 
     def _table_columns(self, table_name: str) -> set[str]:
         return {

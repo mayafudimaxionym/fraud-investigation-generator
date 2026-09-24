@@ -1,6 +1,6 @@
 # V0.5 — Investigator-Ready Investigation Loop
 
-**Status:** Product design approved; architecture approved; implementation not started.
+**Status:** Product design approved; architecture approved; implementation in progress.
 
 ## Purpose and baseline
 
@@ -116,7 +116,7 @@ Proposal A → DECLINED + persisted human instruction
 → independent Proposal B → Needs review
 ```
 
-The decline is authoritative before replacement generation. If generation fails, Proposal A and the human instruction remain persisted, no Proposal B exists, and no action is authorized. The replacement after Decline is never a revision child of the declined proposal. The same authoritative-decline rule applies with or without guidance.
+The decline is authoritative before replacement generation. If generation fails, Proposal A and the human instruction remain persisted, no Proposal B exists, and no action is authorized. Modify uses proposal revision lineage; the replacement after Decline is never a revision child of the declined proposal. A successful reconsideration persists a dedicated decline-decision-to-independent-replacement association solely for restart-safe provenance and retry idempotency. It is not a general provenance graph, lifecycle state, authorization, or execution state. The same authoritative-decline rule applies with or without guidance.
 
 ## Local model operation and recovery
 
@@ -130,7 +130,7 @@ Do not introduce background-job infrastructure, task queues, or a generic workfl
 
 ## Persistence and history
 
-V0.5 adds persisted `investigation_directions` and minimally extends investigation metadata with effective objective and safe package association. Exact SQL schema, migrations, Python API names, and Streamlit component structure remain implementation decisions.
+V0.5 adds persisted `investigation_directions`, a narrow successful decline-reconsideration decision-to-replacement association, and minimally extends investigation metadata with effective objective and safe package association. Exact SQL schema, migrations, Python API names, and Streamlit component structure remain implementation decisions.
 
 History is investigator-readable and tells the investigation story rather than foregrounding database IDs. Internal IDs and lineage remain available for provenance.
 
