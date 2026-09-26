@@ -17,6 +17,18 @@ AGENT_OPERATION_STATUSES = (
     "FAILED",
     "INTERRUPTED",
 )
+AGENT_OPERATION_FAILURE_CATEGORIES = (
+    "SERVICE_UNAVAILABLE",
+    "MODEL_UNAVAILABLE",
+    "REQUEST_TIMEOUT",
+    "GENERATION_ERROR",
+    "PERSISTENCE_ERROR",
+    "SAFE_CONTEXT_UNAVAILABLE",
+    "PACKAGE_ASSOCIATION_UNAVAILABLE",
+    "OBJECTIVE_UNAVAILABLE",
+    "DIRECTION_UNAVAILABLE",
+    "UNKNOWN_FAILURE",
+)
 
 _AGENT_OPERATION_TRANSITIONS = {
     "PENDING_RENDER": ("RUNNING",),
@@ -107,6 +119,7 @@ class AgentOperation:
     triggering_decision_id: str | None = None
     prior_attempt_operation_id: str | None = None
     runner_instance_id: str | None = None
+    failure_category: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_blank(self.operation_id, "operation_id")
@@ -139,6 +152,13 @@ class AgentOperation:
             raise ValueError("PENDING_RENDER must not have a runner_instance_id")
         if self.status == "RUNNING" and self.runner_instance_id is None:
             raise ValueError("RUNNING requires a runner_instance_id")
+        if self.status == "FAILED":
+            if self.failure_category not in AGENT_OPERATION_FAILURE_CATEGORIES:
+                raise ValueError(
+                    "FAILED requires an approved failure_category"
+                )
+        elif self.failure_category is not None:
+            raise ValueError("failure_category is only valid for FAILED operations")
 
 
 def transition_agent_operation(
@@ -147,6 +167,7 @@ def transition_agent_operation(
     updated_at: datetime,
     *,
     runner_instance_id: str | None = None,
+    failure_category: str | None = None,
 ) -> AgentOperation:
     """Return one legal immutable operation transition without persistence."""
     _require_timestamp(updated_at, "updated_at")
@@ -155,6 +176,8 @@ def transition_agent_operation(
     if status not in _AGENT_OPERATION_TRANSITIONS[operation.status]:
         raise ValueError(f"cannot transition {operation.status} operation to {status}")
     if status == "RUNNING":
+        if failure_category is not None:
+            raise ValueError("RUNNING must not have a failure_category")
         _require_non_blank(runner_instance_id, "runner_instance_id")
         return replace(
             operation,
@@ -164,7 +187,17 @@ def transition_agent_operation(
         )
     if runner_instance_id is not None and runner_instance_id != operation.runner_instance_id:
         raise ValueError("runner_instance_id must match the claimed operation")
-    return replace(operation, status=status, updated_at=updated_at)
+    if status == "FAILED":
+        if failure_category not in AGENT_OPERATION_FAILURE_CATEGORIES:
+            raise ValueError("FAILED requires an approved failure_category")
+    elif failure_category is not None:
+        raise ValueError("failure_category is only valid for FAILED operations")
+    return replace(
+        operation,
+        status=status,
+        updated_at=updated_at,
+        failure_category=failure_category,
+    )
 
 
 @dataclass(frozen=True)

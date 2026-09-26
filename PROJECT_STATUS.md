@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop has an **APPROVED REMEDIATION ARCHITECTURE / IMPLEMENTATION IN PROGRESS** after manual acceptance exposed UI lifecycle defects. Remediation Task 1, the durable agent-operation domain and SQLite persistence foundation, is merged; orchestration and presentation do not yet use it.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop has an **APPROVED REMEDIATION ARCHITECTURE / IMPLEMENTATION IN PROGRESS** after manual acceptance exposed UI lifecycle defects. Remediation Tasks 1 and 2 now provide the durable operation persistence and service-orchestration boundary; read projection and Streamlit presentation do not yet use the visible acknowledgement flow.
 
 ## Architecture baseline
 
@@ -16,7 +16,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - `AGENTS.md` provides standing AI-development instructions.
 - `ROADMAP.md` is the authoritative milestone and sequencing reference.
 - `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the approved V0 milestone specification; its implementation and formal acceptance are complete.
-- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Manual acceptance exposed a discrepancy between persisted state and Streamlit presentation; durable-operation persistence is implemented, while service orchestration, read projection, Streamlit presentation, and lifecycle acceptance verification remain pending.
+- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Manual acceptance exposed a discrepancy between persisted state and Streamlit presentation; durable-operation persistence and service orchestration are implemented, while read projection, Streamlit presentation, and lifecycle acceptance verification remain pending.
 - Future milestones still require separate planning and approval.
 - `docs/ARCHITECTURE.md` remains the architecture baseline, and the synthetic-case fixture remains frozen unless framework testing identifies a concrete requirement.
 
@@ -31,6 +31,8 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - A Streamlit/SQLite thread-affinity lifecycle defect found during acceptance was corrected and verified: each Streamlit execution creates and closes its own SQLite-backed approval service, avoiding reuse of a thread-affine connection.
 - **V0.5 remediation Task 1 — COMPLETE / MERGED.** `AgentOperation` defines the approved `PENDING_RENDER`, `RUNNING`, `COMPLETED`, `FAILED`, and `INTERRUPTED` lifecycle. SQLite persistence supports atomic START preparation, authoritative Modify/Decline plus pending-operation transitions, single-claim dispatch, explicit retry lineage, previous-process interruption, and atomic success completion for START, MODIFY, and decline reconsideration.
 - Task 1 persistence tests cover operation-trigger integrity, terminal-state safety, retry provenance, interruption, and rollback of partial generated results. The current full automated baseline is **270 passed, 1 skipped**; the skip remains the Windows physical-symlink environment limitation.
+- **V0.5 remediation Task 2 — IMPLEMENTED / AUTOMATED VERIFICATION PASSED.** The effective objective is the sole initial investigator input. The service can prepare START, MODIFY, and DECLINE as durable `PENDING_RENDER` operations without invoking the model; atomically claim and dispatch one operation; persist safe failure categories; complete generated results through Task 1's atomic boundaries; interrupt ambiguous previous-process work; and create explicit linked retry attempts without duplicating human decisions.
+- Task 2 adds service coverage for pre-dispatch durability, single-claim dispatch, authoritative Modify-before-generation state, categorized failure, retry identity/provenance, objective reconstruction, interruption without replay, and schema-v3 failure migration. The current full automated baseline is **275 passed, 1 skipped**.
 - A minimal dependency-free Python project foundation exists.
 - Deterministic sub-seed derivation and reproducibility metadata are defined.
 - The canonical world includes entities, relationships, events, signals, private fraud campaigns, and the `CanonicalWorld` aggregate.
@@ -57,7 +59,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- Planning and architecture documentation is being synchronized with the merged Task 1 foundation and the approved remaining remediation sequence.
+- Durable service orchestration, objective-only initial input, schema version 4 failure-category persistence, focused tests, and planning/status synchronization are implemented but not yet committed.
 - Local generated/runtime artifacts may exist outside version control, including `investigations.sqlite`, `output/`, and the external `antigravity_critic_v05.md` audit. They are not authoritative project state.
 
 ## Current blockers
@@ -65,15 +67,11 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - Factual customer, support, and operational artifacts are structured and grounded, but are not yet realistic human documents. This remains a future concern and is intentionally outside the frozen synthetic-case fixture.
 - `python -m pip install -e .` has a known pre-existing setuptools flat-layout package-discovery tooling issue. It is not a V0 functional failure and did not prevent local runtime acceptance.
 
-## Current decision gate
-
-- The current UI exposes an optional initial instruction in addition to the persisted effective objective, but the approved durable START operation does not yet define how that separate input survives refresh/restart. Before Task 2 implementation, decide whether the effective objective is the sole initial investigator input or whether a separate initial instruction becomes persisted authoritative request state. No transient-only value may influence a durable model dispatch.
-
 ## Next approved step
 
-Resolve the initial-input decision gate, then implement **V0.5 remediation Task 2 — durable service orchestration**. Preparation must persist `PENDING_RENDER` without invoking Ollama; only an atomic claimant may preflight and generate; success must use the existing atomic completion boundaries; terminated failures must persist both `FAILED` and the safe failure category; previous-process `RUNNING` work must become `INTERRUPTED`; and retry must create a new linked operation without duplicating a human decision.
+Implement **V0.5 remediation Task 3 — operation-aware read projection and package-association grouping**. Context integrity remains highest precedence. Otherwise, the latest operation attempt determines Agent working or operation-specific Attention before proposal/decision fallback; a later completed retry supersedes an earlier failed attempt. Modify-without-revision is valid only while matching attempts exist and none completed, completed Modify requires exactly one revision, and multiple simultaneous pending/running operations are projection-integrity failures. Operation timestamps contribute to activity. The landing list exposes one current/latest investigation per safe package association while retaining unassociated legacy recovery entries.
 
-After Task 2, implement operation-aware read projection and package-association grouping, then the visible Streamlit acknowledgement/dispatch flow with deterministic database configuration, followed by the required real lifecycle/integration verification. No WAL change is approved without a demonstrated locking requirement. No further synthetic-case work is approved; the fixture remains frozen. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
+After Task 3, implement the visible Streamlit acknowledgement/dispatch flow with deterministic database configuration, followed by the required real lifecycle/integration verification. No WAL change is approved without a demonstrated locking requirement. No further synthetic-case work is approved; the fixture remains frozen. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
 
 ## Architectural constraints
 

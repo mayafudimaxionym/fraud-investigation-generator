@@ -224,6 +224,24 @@ def test_agent_operation_allows_only_the_approved_lifecycle_transitions() -> Non
     assert running.runner_instance_id == "runner-001"
     assert completed.status == "COMPLETED"
 
+    failed = transition_agent_operation(
+        running,
+        "FAILED",
+        DECIDED_AT,
+        runner_instance_id="runner-001",
+        failure_category="REQUEST_TIMEOUT",
+    )
+    assert failed.failure_category == "REQUEST_TIMEOUT"
+
+    try:
+        transition_agent_operation(
+            running, "FAILED", DECIDED_AT, runner_instance_id="runner-001"
+        )
+    except ValueError as error:
+        assert "failure_category" in str(error)
+    else:
+        raise AssertionError("FAILED requires a safe failure category")
+
     for source, target in ((pending, "COMPLETED"), (completed, "RUNNING")):
         try:
             transition_agent_operation(source, target, DECIDED_AT)

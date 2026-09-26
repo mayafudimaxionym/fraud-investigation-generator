@@ -1,6 +1,6 @@
 # V0.5 — Investigator-Ready Investigation Loop
 
-**Status:** Product design approved; architecture approved; remediation implementation in progress. Durable operation domain and SQLite persistence primitives are merged; service orchestration, read projection, Streamlit dispatch/presentation, and lifecycle acceptance verification remain pending.
+**Status:** Product design approved; architecture approved; remediation implementation in progress. Durable operation persistence and service orchestration are implemented; read projection, Streamlit dispatch/presentation, and lifecycle acceptance verification remain pending.
 
 ## Purpose and baseline
 
@@ -43,7 +43,7 @@ An optional **Investigation Objective** is prefilled as editable text:
 
 The investigator may keep, edit, replace, or delete it. The effective objective, including an intentional blank, is persisted at investigation level.
 
-Every initial investigator value that influences generation must be persisted before the START operation becomes `PENDING_RENDER`; transient Streamlit session state is not an authoritative request input. The existing UI currently exposes a separate optional initial instruction in addition to the objective. Before durable orchestration is implemented, product behavior must choose either (a) the effective objective as the sole initial investigator input or (b) a separately persisted initial instruction. The implementation must not dispatch using a separate transient-only instruction.
+Every initial investigator value that influences generation must be persisted before the START operation becomes `PENDING_RENDER`; transient Streamlit session state is not an authoritative request input. The effective objective is the sole investigator-authored input for initial generation. V0.5 does not expose or persist a separate initial instruction.
 
 For legacy investigations, `None` means that no effective objective was recorded, while `""` means the investigator intentionally chose a blank objective. An investigator may establish missing legacy objective metadata exactly once; this is metadata completion, not analytical history, and cannot edit or replace an already established objective.
 
@@ -145,7 +145,9 @@ Slow inference is not itself an error. Use a sufficiently generous configurable 
 
 Refresh or restart preserves `PENDING_RENDER` work and may resume the normal visible dispatch path. A refresh while an operation is `RUNNING` must not duplicate dispatch. If server/process interruption leaves a `RUNNING` operation ambiguous, it becomes `INTERRUPTED` and requires Attention and an explicit new request; it is not automatically redispatched. The design provides at-most-one automatic dispatch per durable operation and exactly one committed authoritative result for a successful operation. It does not claim strict exactly-once external Ollama behavior across a process crash.
 
-Read projection treats a Modify decision without a revision as a valid authoritative intermediate or recovery state when its corresponding operation is pending, running, failed, or interrupted. It must not require a revision until the Modify operation has completed successfully. Operation timestamps participate in last-activity calculation.
+Read projection preserves context-integrity Attention before operation-derived presentation. Otherwise, the latest durable operation attempt determines the operational lifecycle: pending/running projects Agent working; failed/interrupted projects operation-specific Attention; and a later completed retry supersedes an earlier failed attempt before proposal/decision fallback. Legacy incomplete-decline detection applies only when no durable operation explains the state. Multiple simultaneous pending/running operations are a projection-integrity failure.
+
+Modify revision validation uses the attempts whose triggering decision matches the Modify decision. Zero revisions is valid only when matching attempts exist and none completed. A completed attempt requires exactly one revision, and more than one revision is always invalid. Operation creation and update timestamps participate in last-activity calculation. Read DTOs expose the latest operation identity/type/status and safe failure category needed for later acknowledgement and recovery UI, but do not expose runner/process implementation details as investigator content.
 
 Do not introduce background-job infrastructure, task queues, or a generic workflow engine. V0.5 keeps local model invocation within the visible Streamlit interaction boundary; this durable safety protocol is not V1 controlled analytical execution.
 
@@ -194,8 +196,8 @@ V0.5 is complete only when all of these are demonstrated:
 ## Approved remediation implementation sequence
 
 1. **Durable operation foundation — complete.** Domain lifecycle, trigger validation, atomic pending transitions, claim, interruption, retry lineage, and atomic successful completion are implemented in the model and SQLite persistence layer.
-2. **Durable service orchestration — next.** Resolve the initial-input representation; persist safe failure categories; prepare START/MODIFY/DECLINE without model invocation; claim and dispatch exactly once per operation; atomically complete success; and persist failure/interruption/retry state.
-3. **Read-model realignment.** Project operation lifecycle, valid Modify-without-revision states, operation activity, Attention reasons, and one current/latest summary per package association.
+2. **Durable service orchestration — complete.** The effective objective is the sole initial input; safe failure categories persist; START/MODIFY/DECLINE prepare without model invocation; one claimant dispatches; success completes atomically; and failure/interruption/retry state is durable.
+3. **Read-model realignment — next.** Apply context and latest-attempt precedence; project operation lifecycle and safe Attention reasons; enforce attempt-aware Modify revision integrity and single-active-operation integrity; include operation activity; and return one current/latest summary per package association.
 4. **Streamlit remediation and deterministic configuration.** Render Working before dispatch, acknowledge once, preserve navigation semantics, resume from authoritative state, and remove working-directory-dependent database selection.
 5. **Lifecycle/integration verification and acceptance.** Exercise the actual Streamlit rerun/session boundary and repeat manual acceptance before declaring V0.5 complete.
 

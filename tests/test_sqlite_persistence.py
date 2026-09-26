@@ -167,6 +167,7 @@ def _operation(
     triggering_decision_id: str | None = None,
     prior_attempt_operation_id: str | None = None,
     runner_instance_id: str | None = None,
+    failure_category: str | None = None,
     updated_at: datetime = BASE_TIME,
 ) -> AgentOperation:
     return AgentOperation(
@@ -180,6 +181,7 @@ def _operation(
         triggering_decision_id,
         prior_attempt_operation_id,
         runner_instance_id,
+        failure_category,
     )
 
 
@@ -222,7 +224,7 @@ def test_fresh_database_creates_v05_schema(tmp_path: Path) -> None:
     assert direction_table is not None
     assert result_table is not None
     assert operation_table is not None
-    assert schema_version == 3
+    assert schema_version == 4
 
 
 def test_v0_schema_migrates_idempotently_without_losing_history(tmp_path: Path) -> None:
@@ -319,12 +321,12 @@ def test_v0_schema_migrates_idempotently_without_losing_history(tmp_path: Path) 
         )
         assert migrated.list_decisions(legacy.investigation_id) == (decision,)
         assert migrated.get_current_direction(legacy.investigation_id) is None
-    assert _schema_version(database_path) == 3
+    assert _schema_version(database_path) == 4
 
     with SQLiteInvestigationStore(database_path) as reopened:
         assert reopened.get_investigation(legacy.investigation_id) == legacy
         assert reopened.list_proposals(legacy.investigation_id)[1] == revised
-    assert _schema_version(database_path) == 3
+    assert _schema_version(database_path) == 4
 
 
 def test_misleading_current_user_version_repairs_a_v0_shaped_schema(tmp_path: Path) -> None:
@@ -353,7 +355,7 @@ def test_misleading_current_user_version_repairs_a_v0_shaped_schema(tmp_path: Pa
 
     assert {"objective", "package_association"} <= columns
     assert direction_table is not None
-    assert _schema_version(database_path) == 3
+    assert _schema_version(database_path) == 4
 
 
 def test_failed_migration_does_not_advance_schema_version(tmp_path: Path) -> None:
@@ -985,9 +987,11 @@ def test_pending_operation_claim_is_atomic_and_terminal_operations_cannot_be_rec
             operation.operation_id, "runner-002", BASE_TIME + timedelta(seconds=2)
         )
         failed = store.mark_operation_failed(
-            operation.operation_id, "runner-001", BASE_TIME + timedelta(seconds=3)
+            operation.operation_id, "runner-001", "REQUEST_TIMEOUT",
+            BASE_TIME + timedelta(seconds=3)
         )
         assert failed.status == "FAILED"
+        assert failed.failure_category == "REQUEST_TIMEOUT"
         assert not store.claim_pending_operation(
             operation.operation_id, "runner-001", BASE_TIME + timedelta(seconds=4)
         )
@@ -1022,6 +1026,36 @@ def test_retry_operation_preserves_terminal_prior_attempt_provenance(tmp_path: P
         assert store.list_agent_operations(investigation.investigation_id) == (
             store.get_agent_operation(first.operation_id), retry,
         )
+
+
+def test_v3_failed_operation_migrates_with_unknown_safe_failure_category(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "operation-v3.sqlite"
+    investigation = _v05_investigation()
+    operation = _operation()
+    with SQLiteInvestigationStore(database_path) as store:
+        store.add_investigation(investigation)
+        store.add_pending_operation(operation)
+        assert store.claim_pending_operation(operation.operation_id, "runner-001", BASE_TIME)
+        store.mark_operation_failed(
+            operation.operation_id, "runner-001", "GENERATION_ERROR",
+            BASE_TIME + timedelta(seconds=1),
+        )
+
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute("ALTER TABLE agent_operations DROP COLUMN failure_category")
+        connection.execute("PRAGMA user_version = 3")
+        connection.commit()
+    finally:
+        connection.close()
+
+    with SQLiteInvestigationStore(database_path) as migrated:
+        failed = migrated.get_agent_operation(operation.operation_id)
+        assert failed.status == "FAILED"
+        assert failed.failure_category == "UNKNOWN_FAILURE"
+    assert _schema_version(database_path) == 4
 
 
 def test_pending_operation_rejects_mismatched_triggering_decision_type(tmp_path: Path) -> None:
@@ -1099,7 +1133,10 @@ def test_retry_operation_rejects_different_triggering_references(tmp_path: Path)
         store.add_proposal(investigation.investigation_id, first_proposal)
         store.persist_decline_with_pending_operation(first_proposal, first_decision, first)
         assert store.claim_pending_operation(first.operation_id, "runner-001", BASE_TIME)
-        store.mark_operation_failed(first.operation_id, "runner-001", BASE_TIME + timedelta(seconds=1))
+        store.mark_operation_failed(
+            first.operation_id, "runner-001", "GENERATION_ERROR",
+            BASE_TIME + timedelta(seconds=1)
+        )
         store.add_proposal(investigation.investigation_id, second_proposal)
         store.persist_human_decision(second_proposal, second_decision)
         invalid_retry = _operation(

@@ -28,7 +28,7 @@ _DECISION_STATUS = {
     "DECLINE": "DECLINED",
     "MODIFY": "MODIFIED",
 }
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -220,10 +220,18 @@ class SQLiteInvestigationStore:
         return cursor.rowcount == 1
 
     def mark_operation_failed(
-        self, operation_id: str, runner_instance_id: str, updated_at: datetime
+        self,
+        operation_id: str,
+        runner_instance_id: str,
+        failure_category: str,
+        updated_at: datetime,
     ) -> AgentOperation:
         return self._transition_claimed_operation(
-            operation_id, "FAILED", runner_instance_id, updated_at
+            operation_id,
+            "FAILED",
+            runner_instance_id,
+            updated_at,
+            failure_category=failure_category,
         )
 
     def mark_operation_interrupted(
@@ -545,18 +553,26 @@ class SQLiteInvestigationStore:
         status: str,
         runner_instance_id: str,
         updated_at: datetime,
+        *,
+        failure_category: str | None = None,
     ) -> AgentOperation:
         with self._connection:
             operation = self._require_running_operation(operation_id, runner_instance_id)
             transitioned = transition_agent_operation(
-                operation, status, updated_at, runner_instance_id=runner_instance_id
+                operation,
+                status,
+                updated_at,
+                runner_instance_id=runner_instance_id,
+                failure_category=failure_category,
             )
             self._connection.execute(
-                "UPDATE agent_operations SET status = ?, updated_at = ? WHERE operation_id = ? "
+                "UPDATE agent_operations SET status = ?, updated_at = ?, failure_category = ? "
+                "WHERE operation_id = ? "
                 "AND status = 'RUNNING' AND runner_instance_id = ?",
                 (
                     transitioned.status,
                     _serialize_timestamp(transitioned.updated_at),
+                    transitioned.failure_category,
                     operation_id,
                     runner_instance_id,
                 ),
@@ -621,8 +637,8 @@ class SQLiteInvestigationStore:
             INSERT INTO agent_operations (
                 operation_id, investigation_id, operation_type, status, created_at, updated_at,
                 triggering_proposal_id, triggering_decision_id, prior_attempt_operation_id,
-                runner_instance_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                runner_instance_id, failure_category
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 operation.operation_id,
@@ -635,6 +651,7 @@ class SQLiteInvestigationStore:
                 operation.triggering_decision_id,
                 operation.prior_attempt_operation_id,
                 operation.runner_instance_id,
+                operation.failure_category,
             ),
         )
 
@@ -1047,6 +1064,7 @@ class SQLiteInvestigationStore:
                     triggering_decision_id TEXT,
                     prior_attempt_operation_id TEXT,
                     runner_instance_id TEXT,
+                    failure_category TEXT,
                     FOREIGN KEY (investigation_id) REFERENCES investigations(investigation_id),
                     FOREIGN KEY (triggering_proposal_id) REFERENCES proposals(proposal_id),
                     FOREIGN KEY (triggering_decision_id) REFERENCES decisions(decision_id),
@@ -1076,6 +1094,14 @@ class SQLiteInvestigationStore:
         }
         if not required <= columns:
             raise ValueError("agent operations schema is incomplete")
+        if "failure_category" not in columns:
+            self._connection.execute(
+                "ALTER TABLE agent_operations ADD COLUMN failure_category TEXT"
+            )
+            self._connection.execute(
+                "UPDATE agent_operations SET failure_category = 'UNKNOWN_FAILURE' "
+                "WHERE status = 'FAILED'"
+            )
         foreign_keys = {
             (row["from"], row["table"], row["to"])
             for row in self._connection.execute("PRAGMA foreign_key_list(agent_operations)")
@@ -1163,4 +1189,5 @@ def _agent_operation_from_row(row: sqlite3.Row) -> AgentOperation:
         row["triggering_decision_id"],
         row["prior_attempt_operation_id"],
         row["runner_instance_id"],
+        row["failure_category"],
     )

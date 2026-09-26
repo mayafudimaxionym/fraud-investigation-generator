@@ -1,6 +1,6 @@
 # ADR 005: Durable Operation Boundary for Visible Streamlit Model Dispatch
 
-**Status:** Accepted; operation domain and SQLite persistence foundation implemented, orchestration and presentation integration pending.
+**Status:** Accepted; operation persistence and service orchestration implemented, read-model and presentation integration pending.
 
 ## Decision
 
@@ -8,7 +8,7 @@ V0.5 will persist a narrowly scoped `AgentOperation` for each visible local-mode
 
 The Streamlit execution that persists `PENDING_RENDER` must not call Ollama. It reruns to render the complete Working screen. A one-shot client-side render acknowledgement causes a later execution to atomically claim the operation from `PENDING_RENDER` to `RUNNING`. Only the successful claimant may invoke Ollama. Success persists the authoritative result and completes the operation; a terminated generation failure marks it failed; ambiguous process interruption marks it interrupted and requires an explicit retry with a new operation identity.
 
-Every objective, instruction, guidance value, trigger, and retry input that influences a durable request must already be authoritative persisted state before dispatch. Streamlit session state is not an acceptable sole source for model input after an operation becomes pending. The representation of any separate initial instruction remains a product decision, but transient-only request input is rejected.
+Every objective, instruction, guidance value, trigger, and retry input that influences a durable request must already be authoritative persisted state before dispatch. Streamlit session state is not an acceptable sole source for model input after an operation becomes pending. The persisted effective objective is the sole investigator-authored input for START; V0.5 has no separate initial-instruction field.
 
 ## Problem
 
@@ -24,7 +24,7 @@ Session state and a bare `st.rerun()` are presentation-local and cannot prove th
 
 The application gains durable recovery and at-most-one automatic dispatch per operation. The qualifier is deliberate: it does not promise strict exactly-once external Ollama behavior across a process crash. A completed operation has one committed authoritative result; an ambiguous running operation requires visible Attention and a new explicit request. The successful authoritative result and the operation's `RUNNING` → `COMPLETED` transition commit atomically. A failed result/completion transaction cannot expose partial generated state as authoritative or mark the operation complete, while prior authoritative Modify or Decline human decisions remain preserved.
 
-Read projection must recognize the operation lifecycle. In particular, a persisted Modify decision without a revision is valid while the corresponding operation is pending, running, failed, or interrupted; only successful completion requires the revision. Failure categories are investigator-safe classifications rather than raw exception disclosure.
+Read projection must recognize the operation lifecycle without overriding context-integrity failures. The latest attempt determines Working or operation-specific Attention, so a completed retry supersedes an earlier failure and legacy incomplete-decline detection remains only a fallback. Modify revision integrity is evaluated against the matching attempt chain: zero revisions is valid only before any attempt completes, while completed Modify requires exactly one. Multiple simultaneous pending/running operations are rejected as inconsistent state. Failure categories are investigator-safe classifications rather than raw exception disclosure, and runner/process details are not investigator-facing content.
 
 SQLite journal mode is not selected by this ADR. Concurrency tuning requires a demonstrated failure and test. The database path is deterministic deployment configuration and must not depend on the process working directory.
 

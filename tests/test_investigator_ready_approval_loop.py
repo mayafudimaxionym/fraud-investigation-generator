@@ -85,11 +85,107 @@ def _service(
 
 
 def _start(service: InvestigatorReadyApprovalLoopService, objective: str = "Investigate."):
-    return service.start_investigation("case-42", objective, "Review the reported concern.")
+    return service.start_investigation("case-42", objective)
 
 
 def _initial_proposal(state):
     return next(proposal for proposal in state.proposals if proposal.status == "PROPOSED")
+
+
+def test_prepare_start_persists_before_model_and_only_one_claim_dispatches(
+    tmp_path: Path,
+) -> None:
+    store, service, agent, preflight = _service(tmp_path)
+
+    operation = service.prepare_start_investigation("case-42", "")
+
+    assert operation.status == "PENDING_RENDER"
+    assert preflight.calls == 0 and agent.requests == []
+    investigation = store.get_investigation(operation.investigation_id)
+    assert investigation.objective == ""
+    assert store.list_proposals(operation.investigation_id) == ()
+    assert store.list_directions(operation.investigation_id) == ()
+
+    completed = service.claim_and_execute_operation(operation.operation_id, "runner-001")
+    assert completed is not None
+    assert preflight.calls == 1 and len(agent.requests) == 1
+    assert agent.requests[0].investigator_instruction is None
+    assert store.get_agent_operation(operation.operation_id).status == "COMPLETED"
+
+    assert service.claim_and_execute_operation(operation.operation_id, "runner-002") is None
+    assert preflight.calls == 1 and len(agent.requests) == 1
+    store.close()
+
+
+def test_prepare_modify_commits_human_transition_before_dispatch(tmp_path: Path) -> None:
+    store, service, agent, preflight = _service(tmp_path)
+    started = _start(service)
+    original = _initial_proposal(started)
+    calls_before = preflight.calls
+    requests_before = len(agent.requests)
+
+    operation = service.prepare_modify(
+        started.investigation.investigation_id,
+        original.proposal_id,
+        "Focus on event timing.",
+    )
+
+    prepared = service.get_state(started.investigation.investigation_id)
+    assert prepared.proposals[0].status == "MODIFIED"
+    assert prepared.decisions[0].decision_type == "MODIFY"
+    assert not any(proposal.revised_from_proposal_id for proposal in prepared.proposals)
+    assert operation.status == "PENDING_RENDER"
+    assert preflight.calls == calls_before and len(agent.requests) == requests_before
+
+    completed = service.claim_and_execute_operation(operation.operation_id, "runner-modify")
+    assert completed is not None
+    assert _initial_proposal(completed).revised_from_proposal_id == original.proposal_id
+    store.close()
+
+
+def test_failed_start_retry_uses_new_operation_identity_and_persisted_objective(
+    tmp_path: Path,
+) -> None:
+    store, service, agent, preflight = _service(tmp_path)
+    first = service.prepare_start_investigation("case-42", "Persist this objective.")
+    preflight.failure = ProposalModelError(
+        ProposalModelFailureCategory.SERVICE_UNAVAILABLE, "offline"
+    )
+    with pytest.raises(InvestigatorReadyServiceError):
+        service.claim_and_execute_operation(first.operation_id, "runner-first")
+    failed = store.get_agent_operation(first.operation_id)
+    assert failed.status == "FAILED"
+    assert failed.failure_category == "SERVICE_UNAVAILABLE"
+
+    preflight.failure = None
+    retry = service.prepare_retry(first.operation_id)
+    assert retry.operation_id != first.operation_id
+    assert retry.prior_attempt_operation_id == first.operation_id
+    completed = service.claim_and_execute_operation(retry.operation_id, "runner-retry")
+    assert completed is not None
+    assert completed.investigation.objective == "Persist this objective."
+    assert agent.requests[-1].objective == "Persist this objective."
+    store.close()
+
+
+def test_previous_process_running_operation_becomes_interrupted_and_is_not_replayed(
+    tmp_path: Path,
+) -> None:
+    store, service, agent, preflight = _service(tmp_path)
+    operation = service.prepare_start_investigation("case-42", "Investigate.")
+    assert store.claim_pending_operation(
+        operation.operation_id, "old-process", datetime.now(timezone.utc)
+    )
+
+    interrupted = service.interrupt_previous_process_operations("new-process")
+
+    assert tuple(item.operation_id for item in interrupted) == (operation.operation_id,)
+    assert interrupted[0].status == "INTERRUPTED"
+    assert preflight.calls == 0 and agent.requests == []
+    assert service.claim_and_execute_operation(operation.operation_id, "new-process") is None
+    retry = service.prepare_retry(operation.operation_id)
+    assert retry.prior_attempt_operation_id == operation.operation_id
+    store.close()
 
 
 def test_initial_flow_preflights_once_and_atomically_persists_direction_and_proposal(
@@ -113,7 +209,9 @@ def test_initial_flow_preflights_once_and_atomically_persists_direction_and_prop
     store.close()
 
 
-def test_initial_context_or_model_failure_creates_no_investigation(tmp_path: Path) -> None:
+def test_initial_context_failure_creates_nothing_and_model_failure_is_durable(
+    tmp_path: Path,
+) -> None:
     store, service, agent, preflight = _service(tmp_path)
     with pytest.raises(InvestigatorReadyServiceError) as unknown:
         service.start_investigation("unknown", "objective")
@@ -126,7 +224,12 @@ def test_initial_context_or_model_failure_creates_no_investigation(tmp_path: Pat
     with pytest.raises(InvestigatorReadyServiceError) as unavailable:
         _start(service)
     assert unavailable.value.category is ProposalModelFailureCategory.MODEL_UNAVAILABLE
-    assert store.list_investigations() == ()
+    (investigation,) = store.list_investigations()
+    (operation,) = store.list_agent_operations(investigation.investigation_id)
+    assert operation.status == "FAILED"
+    assert operation.failure_category == "MODEL_UNAVAILABLE"
+    assert store.list_proposals(investigation.investigation_id) == ()
+    assert store.list_directions(investigation.investigation_id) == ()
     store.close()
 
 
@@ -134,20 +237,16 @@ def test_initial_persistence_failure_leaves_no_partial_investigation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, service, _, _ = _service(tmp_path)
-    existing = InvestigationRecord("existing", "development-case-42", BASE_TIME, BASE_TIME, "", "case-42")
-    store.add_investigation(existing)
-    store.add_proposal(
-        existing.investigation_id,
-        AnalyticalActionProposal("duplicate", "Review events.", "Assess.", "Now.", "visible_events.csv", "Summary.", "PROPOSED", BASE_TIME),
+    def fail_pending(*_args: object) -> None:
+        raise ValueError("forced persistence failure")
+
+    monkeypatch.setattr(
+        store, "add_investigation_with_pending_start_operation", fail_pending
     )
-    identifiers = iter(("new-investigation", "duplicate", "new-direction"))
-    monkeypatch.setattr("investigation.approval_loop._new_identifier", lambda _prefix: next(identifiers))
     with pytest.raises(InvestigatorReadyServiceError) as failed:
-        _start(service)
+        service.prepare_start_investigation("case-42", "Investigate.")
     assert failed.value.category == "PERSISTENCE_ERROR"
-    with pytest.raises(ValueError, match="does not exist"):
-        store.get_investigation("new-investigation")
-    assert store.get_current_direction("new-investigation") is None
+    assert store.list_investigations() == ()
     store.close()
 
 
@@ -177,7 +276,7 @@ def test_modify_uses_revision_lineage_and_creates_direction_only_when_changed(tm
 
 
 @pytest.mark.parametrize("failure_owner", ("preflight", "agent"))
-def test_modify_failure_leaves_original_proposed_without_decision(
+def test_modify_failure_preserves_authoritative_decision_without_revision(
     tmp_path: Path, failure_owner: str
 ) -> None:
     store, service, agent, preflight = _service(tmp_path)
@@ -193,31 +292,39 @@ def test_modify_failure_leaves_original_proposed_without_decision(
         service.modify(state.investigation.investigation_id, original.proposal_id, "Focus on events.")
     assert raised.value.category is ProposalModelFailureCategory.REQUEST_TIMEOUT
     after = service.get_state(state.investigation.investigation_id)
-    assert after.proposals == state.proposals and after.decisions == () and len(after.directions) == 1
+    assert [proposal.status for proposal in after.proposals] == ["MODIFIED"]
+    assert len(after.decisions) == 1
+    assert after.decisions[0].decision_type == "MODIFY"
+    assert after.decisions[0].instruction_or_reason == "Focus on events."
+    assert len(after.directions) == 1
+    operation = store.list_agent_operations(state.investigation.investigation_id)[-1]
+    assert operation.status == "FAILED"
+    assert operation.failure_category == "REQUEST_TIMEOUT"
     store.close()
 
 
-def test_modify_persistence_failure_rolls_back_decision_direction_and_revision(
+def test_modify_completion_failure_preserves_decision_and_no_revision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store, service, agent, _ = _service(tmp_path)
     state = _start(service)
     original = _initial_proposal(state)
-    duplicate = AnalyticalActionProposal(
-        "duplicate", "Other action.", "Assess.", "Now.", "visible_events.csv", "Summary.", "PROPOSED", BASE_TIME
-    )
-    other = InvestigationRecord("other", "development-case-42", BASE_TIME, BASE_TIME, "", "case-42")
-    store.add_investigation(other)
-    store.add_proposal(other.investigation_id, duplicate)
     agent.direction = CandidateDirectionContent(("A changed explanation.",), state.current_direction.plan_steps)  # type: ignore[union-attr]
-    identifiers = iter(("modify-decision", "duplicate", "direction-002"))
-    monkeypatch.setattr("investigation.approval_loop._new_identifier", lambda _prefix: next(identifiers))
+
+    def fail_completion(*_args: object) -> None:
+        raise ValueError("forced completion failure")
+
+    monkeypatch.setattr(store, "complete_modify_operation", fail_completion)
     with pytest.raises(InvestigatorReadyServiceError) as failed:
         service.modify(state.investigation.investigation_id, original.proposal_id, "Focus it.")
     assert failed.value.category == "PERSISTENCE_ERROR"
     after = service.get_state(state.investigation.investigation_id)
-    assert len(after.directions) == 1 and after.decisions == ()
-    assert all(proposal.status == "PROPOSED" for proposal in after.proposals)
+    assert len(after.directions) == 1
+    assert len(after.decisions) == 1 and after.decisions[0].decision_type == "MODIFY"
+    assert [proposal.status for proposal in after.proposals] == ["MODIFIED"]
+    operation = store.list_agent_operations(state.investigation.investigation_id)[-1]
+    assert operation.status == "FAILED"
+    assert operation.failure_category == "PERSISTENCE_ERROR"
     store.close()
 
 

@@ -41,16 +41,15 @@ Manual acceptance exposed a Streamlit lifecycle discrepancy: successful persiste
 
 **Completed remediation increment:**
 
-- Task 1 delivered and merged the narrow `AgentOperation` domain lifecycle and SQLite persistence primitives for pending preparation, atomic claim, failure/interruption, retry lineage, and atomic successful completion. These primitives are not yet connected to the V0.5 service, read model, or Streamlit controller.
+- Task 1 delivered and merged the narrow `AgentOperation` domain lifecycle and SQLite persistence primitives for pending preparation, atomic claim, failure/interruption, retry lineage, and atomic successful completion.
+- Task 2 connected those primitives to durable service orchestration. The effective objective is the sole initial investigator input. START, MODIFY, and DECLINE can be prepared without model invocation; only an atomic claimant dispatches; success completes atomically; failure categories, interruption, and explicit linked retry are durable. The compatibility UI path remains synchronous until the Streamlit remediation task.
 
 **Approved remaining sequence:**
 
-1. Resolve whether the persisted effective objective is the sole initial investigator input or a separate initial instruction is also persisted. Every value that influences a model request must be authoritative persisted state before `PENDING_RENDER`.
-2. Implement durable service orchestration: prepare without model invocation, claim once, preflight/generate only for the claimant, atomically complete successful results, persist safe failure categories, interrupt ambiguous previous-process work, and create explicit linked retry operations.
-3. Realign the read model: project pending/running operations as Agent working, failed/interrupted operations as Attention, allow authoritative Modify-without-revision intermediate/failure states, include operation activity, and group the landing page by safe package association while retaining unassociated legacy recovery entries.
-4. Remediate Streamlit presentation: render Working before dispatch, use one-shot acknowledgement, make Back presentation-only, reconstruct Resume from persistence, and use deterministic deployment-level database configuration.
-5. Add the required automated real Streamlit lifecycle/integration coverage and repeat manual acceptance.
-6. Update status documentation after acceptance. Packaging discovery and narrow local-artifact ignores may be handled as separate non-blocking maintenance.
+1. Realign the read model: preserve context-integrity precedence; use the latest operation attempt to project pending/running as Agent working and failed/interrupted as Attention; make Modify revision validation attempt-aware; reject multiple simultaneous pending/running operations; include operation activity; and group the landing page by safe package association while retaining unassociated legacy recovery entries. Legacy incomplete-decline detection is only a fallback when no durable operation explains the state.
+2. Remediate Streamlit presentation: render Working before dispatch, use one-shot acknowledgement, make Back presentation-only, reconstruct Resume from persistence, and use deterministic deployment-level database configuration.
+3. Add the required automated real Streamlit lifecycle/integration coverage and repeat manual acceptance.
+4. Update status documentation after acceptance. Packaging discovery and narrow local-artifact ignores may be handled as separate non-blocking maintenance.
 
 WAL mode is not part of the approved remediation unless a reproducible locking test demonstrates the need. The frozen synthetic fixture is not modified as part of V0.5 remediation.
 

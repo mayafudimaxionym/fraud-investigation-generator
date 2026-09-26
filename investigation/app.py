@@ -74,7 +74,7 @@ def operation_working_label(operation: str) -> str:
 
 
 def _initialize(st: object) -> None:
-    for key, value in {"v05_view": "list", "v05_active_id": None, "v05_pending": None, "v05_error": None, "v05_new_objective": DEFAULT_OBJECTIVE, "v05_new_instruction": ""}.items():
+    for key, value in {"v05_view": "list", "v05_active_id": None, "v05_pending": None, "v05_error": None, "v05_new_objective": DEFAULT_OBJECTIVE}.items():
         st.session_state.setdefault(key, value)
 
 
@@ -96,7 +96,9 @@ def _perform_pending(st: object, service: InvestigatorReadyApprovalLoopService |
         with st.status(wording, expanded=True):
             st.write("The agent is working. No new action is authorized during processing.")
             if operation == "start":
-                state = service.start_investigation(pending["association"], pending["objective"], pending.get("instruction") or None)
+                state = service.start_investigation(
+                    pending["association"], pending["objective"]
+                )
             elif operation == "modify":
                 state = service.modify(pending["investigation_id"], pending["proposal_id"], pending["instruction"])
             elif operation == "decline":
@@ -137,10 +139,9 @@ def _render_new(st: object, catalog: ConfiguredCaseCatalog, service: Investigato
     _, context = catalog.load_case(selected.association_id)
     _render_context(st, context)
     objective = st.text_area("Investigation objective", value=st.session_state.v05_new_objective, key="new-objective")
-    instruction = st.text_area("Additional investigator instruction (optional)", value=st.session_state.v05_new_instruction, key="new-instruction")
     if st.button("Start investigation", type="primary", disabled=service is None):
-        st.session_state.v05_new_objective, st.session_state.v05_new_instruction = objective, instruction
-        _queue(st, "start", association=selected.association_id, objective=objective, instruction=instruction)
+        st.session_state.v05_new_objective = objective
+        _queue(st, "start", association=selected.association_id, objective=objective)
     if service is None:
         st.info("Local model configuration is required before investigation reasoning can start.")
 
