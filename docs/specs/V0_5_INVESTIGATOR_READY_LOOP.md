@@ -1,6 +1,6 @@
 # V0.5 — Investigator-Ready Investigation Loop
 
-**Status:** Product design approved; architecture approved; remediation implementation pending.
+**Status:** Product design approved; architecture approved; remediation implementation in progress. Durable operation domain and SQLite persistence primitives are merged; service orchestration, read projection, Streamlit dispatch/presentation, and lifecycle acceptance verification remain pending.
 
 ## Purpose and baseline
 
@@ -42,6 +42,8 @@ An optional **Investigation Objective** is prefilled as editable text:
 > Investigate the reported suspicious activity, identify relevant patterns and relationships, and assess the plausible explanations without assuming any explanation is established in advance.
 
 The investigator may keep, edit, replace, or delete it. The effective objective, including an intentional blank, is persisted at investigation level.
+
+Every initial investigator value that influences generation must be persisted before the START operation becomes `PENDING_RENDER`; transient Streamlit session state is not an authoritative request input. The existing UI currently exposes a separate optional initial instruction in addition to the objective. Before durable orchestration is implemented, product behavior must choose either (a) the effective objective as the sole initial investigator input or (b) a separately persisted initial instruction. The implementation must not dispatch using a separate transient-only instruction.
 
 For legacy investigations, `None` means that no effective objective was recorded, while `""` means the investigator intentionally chose a blank objective. An investigator may establish missing legacy objective metadata exactly once; this is metadata completion, not analytical history, and cannot edit or replace an already established objective.
 
@@ -131,7 +133,7 @@ The decline is authoritative before replacement generation. In its first phase, 
 
 Model configuration is application/deployment-level operational configuration, not normal investigator workflow. It includes explicit Ollama base URL, model, generous hard processing limit, investigation database location, and case/package location as needed. Before agent reasoning, validate that local Ollama is reachable and the explicitly configured model is available. Do not silently substitute a model.
 
-V0.5 persists a narrow `AgentOperation` for visible model dispatch. An operation has its own identity, a narrowly scoped type (`START`, `MODIFY`, `DECLINE_REDIRECT`, or `DECLINE_RECONSIDER` as applicable), and a lifecycle of `PENDING_RENDER`, `RUNNING`, `COMPLETED`, `FAILED`, or `INTERRUPTED`. This is not a generic job queue, background worker, analytical executor, or workflow engine.
+V0.5 persists a narrow `AgentOperation` for visible model dispatch. An operation has its own identity, a narrowly scoped type (`START`, `MODIFY`, `DECLINE_REDIRECT`, or `DECLINE_RECONSIDER` as applicable), and a lifecycle of `PENDING_RENDER`, `RUNNING`, `COMPLETED`, `FAILED`, or `INTERRUPTED`. A failed operation persists a safe failure category sufficient for restart-safe Attention and recovery behavior; raw internal exception text need not be persisted or shown. This is not a generic job queue, background worker, analytical executor, or workflow engine.
 
 The Working screen and model dispatch occur in separate Streamlit executions. A human action first persists `PENDING_RENDER` and triggers a rerun. The complete Working screen renders without an Ollama call; a one-shot client-side render acknowledgement triggers a subsequent execution. That execution atomically claims the operation from `PENDING_RENDER` to `RUNNING`; only the successful claimant calls Ollama. Generation failures persist `FAILED` and lead to Attention.
 
@@ -143,11 +145,15 @@ Slow inference is not itself an error. Use a sufficiently generous configurable 
 
 Refresh or restart preserves `PENDING_RENDER` work and may resume the normal visible dispatch path. A refresh while an operation is `RUNNING` must not duplicate dispatch. If server/process interruption leaves a `RUNNING` operation ambiguous, it becomes `INTERRUPTED` and requires Attention and an explicit new request; it is not automatically redispatched. The design provides at-most-one automatic dispatch per durable operation and exactly one committed authoritative result for a successful operation. It does not claim strict exactly-once external Ollama behavior across a process crash.
 
+Read projection treats a Modify decision without a revision as a valid authoritative intermediate or recovery state when its corresponding operation is pending, running, failed, or interrupted. It must not require a revision until the Modify operation has completed successfully. Operation timestamps participate in last-activity calculation.
+
 Do not introduce background-job infrastructure, task queues, or a generic workflow engine. V0.5 keeps local model invocation within the visible Streamlit interaction boundary; this durable safety protocol is not V1 controlled analytical execution.
 
 ## Persistence and history
 
 V0.5 adds persisted `investigation_directions`, persisted narrow `agent_operations`, a narrow successful decline-reconsideration decision-to-replacement association, and minimally extends investigation metadata with effective objective and safe package association. The investigation database location is deterministic and must not depend on an arbitrary process working directory. Exact SQL schema, migrations, Python API names, and Streamlit component structure remain implementation decisions.
+
+WAL mode is not a V0.5 requirement. SQLite concurrency settings may change only in response to a reproducible lifecycle/concurrency failure and corresponding automated test. Packaging discovery and local-artifact ignore rules are non-blocking maintenance rather than prerequisites for durable dispatch. The frozen synthetic fixture remains unchanged unless framework testing exposes a concrete requirement.
 
 History is investigator-readable and tells the investigation story rather than foregrounding database IDs. Internal IDs and lineage remain available for provenance.
 
@@ -184,6 +190,14 @@ V0.5 is complete only when all of these are demonstrated:
 12. Retry is explicit, uses a new operation identity, and starts only after the prior request terminates.
 13. The landing list presents the current/latest investigation state per persisted safe package association rather than a raw database-record browser; mutable/display-oriented `case_reference` is not the grouping key; unassociated legacy investigations use recovery/Attention until explicitly associated; and normal investigator operation requires no operational configuration knowledge.
 14. No analytical action is executed anywhere in V0.5.
+
+## Approved remediation implementation sequence
+
+1. **Durable operation foundation — complete.** Domain lifecycle, trigger validation, atomic pending transitions, claim, interruption, retry lineage, and atomic successful completion are implemented in the model and SQLite persistence layer.
+2. **Durable service orchestration — next.** Resolve the initial-input representation; persist safe failure categories; prepare START/MODIFY/DECLINE without model invocation; claim and dispatch exactly once per operation; atomically complete success; and persist failure/interruption/retry state.
+3. **Read-model realignment.** Project operation lifecycle, valid Modify-without-revision states, operation activity, Attention reasons, and one current/latest summary per package association.
+4. **Streamlit remediation and deterministic configuration.** Render Working before dispatch, acknowledge once, preserve navigation semantics, resume from authoritative state, and remove working-directory-dependent database selection.
+5. **Lifecycle/integration verification and acceptance.** Exercise the actual Streamlit rerun/session boundary and repeat manual acceptance before declaring V0.5 complete.
 
 ### Required automated Streamlit lifecycle/integration coverage
 

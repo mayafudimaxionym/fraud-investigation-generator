@@ -695,6 +695,14 @@ The direction is distinct from the one proposed next action. Direction is provis
 
 V0.5 model operation remains local and visibly governed. A durable, narrowly scoped agent-operation record separates Streamlit Working-screen rendering from model dispatch: render acknowledgement precedes one atomic server-side claim, so only the claimant invokes Ollama. Pending work survives presentation reruns, ambiguous interrupted work becomes Attention rather than being replayed, and explicit retry uses a new operation identity. Deployment configuration supplies explicit Ollama endpoint/model and a generous hard processing limit; preflight distinguishes unavailable service or model without silent substitution. This is neither a background-job framework nor V1 controlled analytical execution.
 
+Every investigator value that influences a durable model request must be persisted as authoritative request state before the operation becomes `PENDING_RENDER`. Streamlit session state may carry presentation state but must not be the sole source of an objective, instruction, guidance, trigger, or retry input used after acknowledgement or restart. Whether initial input is represented solely by the effective objective or by an additional persisted instruction is a product decision; a transient-only second instruction is not permitted.
+
+An agent operation's persisted terminal state must support authoritative recovery presentation. `FAILED` retains a safe failure category sufficient to distinguish at least unavailable service, unavailable configured model, request timeout, generation error, and persistence error where recovery differs. Internal exception text is not automatically investigator-visible. `INTERRUPTED` represents ambiguous prior-process work and is never an automatic replay signal.
+
+Lifecycle projection is derived from operations together with directions, proposals, and decisions. `PENDING_RENDER` and `RUNNING` project as Agent working; `FAILED` and `INTERRUPTED` project as Attention; and a Modify decision with no revision is valid while its operation is pending, running, failed, or interrupted. The investigator landing page groups associated records by the immutable safe package association and presents the current/latest investigation for that association; unassociated legacy records remain explicit recovery entries.
+
+The investigation database location is deployment-level configuration with a deterministic application default; it must not vary with the process working directory. SQLite journal-mode changes are operational tuning, not an architectural requirement, and require a demonstrated concurrency need rather than speculative adoption.
+
 Evaluator isolation remains absolute: evaluator-only material, private truth, and raw structured rows do not enter investigator UI, inventory, prompts, or derived investigator-visible state. Approved actions remain unexecuted; controlled analytical execution remains V1.
 
 ---
