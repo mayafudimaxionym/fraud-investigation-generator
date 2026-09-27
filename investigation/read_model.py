@@ -8,6 +8,7 @@ from enum import Enum
 
 from investigation.case_catalog import AvailableInvestigatorCase, ConfiguredCaseCatalog
 from investigation.models import (
+    AgentOperation,
     AnalyticalActionProposal,
     HumanDecision,
     InvestigationDirection,
@@ -30,10 +31,22 @@ class AttentionReason(str, Enum):
     MISSING_OBJECTIVE = "MISSING_OBJECTIVE"
     DECLINE_RECONSIDERATION_INCOMPLETE = "DECLINE_RECONSIDERATION_INCOMPLETE"
     SAFE_CONTEXT_UNAVAILABLE = "SAFE_CONTEXT_UNAVAILABLE"
+    OPERATION_FAILED = "OPERATION_FAILED"
+    OPERATION_INTERRUPTED = "OPERATION_INTERRUPTED"
 
 
 class ProjectionIntegrityError(ValueError):
     """Persisted facts cannot safely be projected as one investigator lifecycle."""
+
+
+@dataclass(frozen=True)
+class InvestigatorOperation:
+    """Investigator-safe operation state without runner/process implementation details."""
+
+    operation_id: str
+    operation_type: str
+    status: str
+    failure_category: str | None
 
 
 @dataclass(frozen=True)
@@ -46,6 +59,7 @@ class InvestigationSummary:
     attention_reason: AttentionReason | None
     current_or_latest_action: str | None
     last_activity: datetime
+    latest_operation: InvestigatorOperation | None
 
 
 @dataclass(frozen=True)
@@ -63,6 +77,7 @@ class InvestigationDetail:
     decision_history: tuple[HumanDecision, ...]
     decline_reconsideration_results: tuple[DeclineReconsiderationResult, ...]
     last_activity: datetime
+    latest_operation: InvestigatorOperation | None
 
 
 class InvestigationReadProjector:
@@ -73,9 +88,19 @@ class InvestigationReadProjector:
         self._catalog = catalog
 
     def list_investigations(self) -> tuple[InvestigationSummary, ...]:
-        """Return deterministic safe summaries ordered by authoritative activity."""
-        summaries = tuple(self._summary(self.detail(item.investigation_id)) for item in self._store.list_investigations())
-        return tuple(sorted(summaries, key=lambda item: (item.last_activity, item.investigation_id), reverse=True))
+        """Return one current associated summary plus each legacy recovery entry."""
+        associated: dict[str, InvestigationSummary] = {}
+        unassociated: list[InvestigationSummary] = []
+        for investigation in self._store.list_investigations():
+            summary = self._summary(self.detail(investigation.investigation_id))
+            if summary.package_association is None:
+                unassociated.append(summary)
+                continue
+            current = associated.get(summary.package_association)
+            if current is None or self._activity_key(summary) > self._activity_key(current):
+                associated[summary.package_association] = summary
+        summaries = (*associated.values(), *unassociated)
+        return tuple(sorted(summaries, key=self._activity_key, reverse=True))
 
     def detail(self, investigation_id: str) -> InvestigationDetail:
         """Reconstruct one complete investigator-safe read projection."""
@@ -85,21 +110,31 @@ class InvestigationReadProjector:
         proposals = self._store.list_proposals(investigation_id)
         decisions = self._store.list_decisions(investigation_id)
         results = self._store.list_decline_reconsideration_results(investigation_id)
+        operations = self._store.list_agent_operations(investigation_id)
         proposal_by_id = {proposal.proposal_id: proposal for proposal in proposals}
         decision_by_id = {decision.decision_id: decision for decision in decisions}
-        self._validate_decision_lifecycle(decisions, proposal_by_id)
+        self._validate_active_operations(operations)
+        self._validate_decision_lifecycle(decisions, proposal_by_id, operations)
         self._validate_reconsideration_results(results, proposal_by_id, decision_by_id)
 
         attention_reason, case, context = self._context_state(investigation)
         active = self._active_proposal(proposals)
         incomplete_decline = self._incomplete_decline(decisions, results)
-        if attention_reason is None and incomplete_decline is not None:
-            attention_reason = AttentionReason.DECLINE_RECONSIDERATION_INCOMPLETE
+        latest_operation = self._latest_operation(operations)
+        if attention_reason is None:
+            if latest_operation is not None and latest_operation.status == "FAILED":
+                attention_reason = AttentionReason.OPERATION_FAILED
+            elif latest_operation is not None and latest_operation.status == "INTERRUPTED":
+                attention_reason = AttentionReason.OPERATION_INTERRUPTED
+            elif (
+                latest_operation is None or latest_operation.status == "COMPLETED"
+            ) and incomplete_decline is not None:
+                attention_reason = AttentionReason.DECLINE_RECONSIDERATION_INCOMPLETE
 
         linked_replacement = self._linked_active_replacement(results, proposal_by_id)
         if linked_replacement is not None:
             active = linked_replacement
-        lifecycle = self._lifecycle(attention_reason, active, decisions)
+        lifecycle = self._lifecycle(attention_reason, latest_operation, active, decisions)
         current_or_last = self._current_or_last(
             lifecycle, active, proposals, decisions, incomplete_decline, proposal_by_id
         )
@@ -107,7 +142,10 @@ class InvestigationReadProjector:
             investigation, case, context, lifecycle, attention_reason,
             directions[-1] if directions else None, directions, active, current_or_last,
             proposals, decisions, results,
-            self._last_activity(investigation, directions, proposals, decisions, results),
+            self._last_activity(
+                investigation, directions, proposals, decisions, results, operations
+            ),
+            self._operation_projection(latest_operation),
         )
 
     def _context_state(
@@ -155,6 +193,7 @@ class InvestigationReadProjector:
     def _validate_decision_lifecycle(
         decisions: tuple[HumanDecision, ...],
         proposals: dict[str, AnalyticalActionProposal],
+        operations: tuple[AgentOperation, ...],
     ) -> None:
         expected_status = {
             "APPROVE": "APPROVED",
@@ -172,8 +211,64 @@ class InvestigationReadProjector:
                 proposal for proposal in proposals.values()
                 if proposal.revised_from_proposal_id == decision.proposal_id
             )
-            if len(revisions) != 1:
-                raise ProjectionIntegrityError("MODIFY decision does not have exactly one persisted revision")
+            if len(revisions) > 1:
+                raise ProjectionIntegrityError("MODIFY decision has multiple persisted revisions")
+            attempts = tuple(
+                operation
+                for operation in operations
+                if operation.operation_type == "MODIFY"
+                and operation.triggering_decision_id == decision.decision_id
+            )
+            has_completed_attempt = any(
+                operation.status == "COMPLETED" for operation in attempts
+            )
+            if has_completed_attempt and len(revisions) != 1:
+                raise ProjectionIntegrityError(
+                    "completed MODIFY operation does not have exactly one persisted revision"
+                )
+            if attempts and not has_completed_attempt and revisions:
+                raise ProjectionIntegrityError(
+                    "incomplete MODIFY operation cannot have a persisted revision"
+                )
+            if not attempts and len(revisions) != 1:
+                raise ProjectionIntegrityError(
+                    "legacy MODIFY decision does not have exactly one persisted revision"
+                )
+
+    @staticmethod
+    def _validate_active_operations(operations: tuple[AgentOperation, ...]) -> None:
+        active = tuple(
+            operation
+            for operation in operations
+            if operation.status in ("PENDING_RENDER", "RUNNING")
+        )
+        if len(active) > 1:
+            raise ProjectionIntegrityError(
+                "persisted workflow state contains multiple active agent operations"
+            )
+
+    @staticmethod
+    def _latest_operation(
+        operations: tuple[AgentOperation, ...]
+    ) -> AgentOperation | None:
+        return (
+            max(operations, key=lambda item: (item.created_at, item.operation_id))
+            if operations
+            else None
+        )
+
+    @staticmethod
+    def _operation_projection(
+        operation: AgentOperation | None,
+    ) -> InvestigatorOperation | None:
+        if operation is None:
+            return None
+        return InvestigatorOperation(
+            operation.operation_id,
+            operation.operation_type,
+            operation.status,
+            operation.failure_category,
+        )
 
     @staticmethod
     def _incomplete_decline(
@@ -205,11 +300,17 @@ class InvestigationReadProjector:
     @staticmethod
     def _lifecycle(
         attention_reason: AttentionReason | None,
+        latest_operation: AgentOperation | None,
         active: AnalyticalActionProposal | None,
         decisions: tuple[HumanDecision, ...],
     ) -> PersistedLifecycleState:
         if attention_reason is not None:
             return PersistedLifecycleState.ATTENTION
+        if latest_operation is not None and latest_operation.status in (
+            "PENDING_RENDER",
+            "RUNNING",
+        ):
+            return PersistedLifecycleState.AGENT_WORKING
         if active is not None:
             return PersistedLifecycleState.NEEDS_REVIEW
         if decisions and max(decisions, key=lambda item: (item.decided_at, item.decision_id)).decision_type == "APPROVE":
@@ -244,6 +345,7 @@ class InvestigationReadProjector:
         proposals: tuple[AnalyticalActionProposal, ...],
         decisions: tuple[HumanDecision, ...],
         results: tuple[DeclineReconsiderationResult, ...],
+        operations: tuple[AgentOperation, ...],
     ) -> datetime:
         return max(
             investigation.created_at, investigation.updated_at,
@@ -251,7 +353,13 @@ class InvestigationReadProjector:
             *(item.created_at for item in proposals),
             *(item.decided_at for item in decisions),
             *(item.created_at for item in results),
+            *(item.created_at for item in operations),
+            *(item.updated_at for item in operations),
         )
+
+    @staticmethod
+    def _activity_key(summary: InvestigationSummary) -> tuple[datetime, str]:
+        return summary.last_activity, summary.investigation_id
 
     @staticmethod
     def _summary(detail: InvestigationDetail) -> InvestigationSummary:
@@ -264,4 +372,5 @@ class InvestigationReadProjector:
             detail.attention_reason,
             detail.current_or_last_proposal.action if detail.current_or_last_proposal else None,
             detail.last_activity,
+            detail.latest_operation,
         )

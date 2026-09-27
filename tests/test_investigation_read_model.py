@@ -9,7 +9,13 @@ import pytest
 
 from generator.dev.package_case import export_development_investigation_package
 from investigation.case_catalog import ConfiguredCaseCatalog, ConfiguredCasePackage
-from investigation.models import AnalyticalActionProposal, HumanDecision, InvestigationDirection, InvestigationRecord
+from investigation.models import (
+    AgentOperation,
+    AnalyticalActionProposal,
+    HumanDecision,
+    InvestigationDirection,
+    InvestigationRecord,
+)
 from investigation.persistence import DeclineReconsiderationResult, SQLiteInvestigationStore
 from investigation.read_model import AttentionReason, InvestigationReadProjector, PersistedLifecycleState, ProjectionIntegrityError
 
@@ -31,6 +37,29 @@ def _proposal(identifier: str = "proposal-001", created: datetime = TIME) -> Ana
 
 def _direction(investigation_id: str = "investigation-001") -> InvestigationDirection:
     return InvestigationDirection("direction-001", investigation_id, 1, ("Misuse is plausible.", "Shared access is plausible."), ("Review events.",), TIME, "INITIAL")
+
+
+def _operation(
+    identifier: str = "operation-001",
+    investigation_id: str = "investigation-001",
+    *,
+    operation_type: str = "START",
+    created_at: datetime = TIME,
+    triggering_proposal_id: str | None = None,
+    triggering_decision_id: str | None = None,
+    prior_attempt_operation_id: str | None = None,
+) -> AgentOperation:
+    return AgentOperation(
+        identifier,
+        investigation_id,
+        operation_type,
+        "PENDING_RENDER",
+        created_at,
+        created_at,
+        triggering_proposal_id,
+        triggering_decision_id,
+        prior_attempt_operation_id,
+    )
 
 
 def _projector(tmp_path: Path) -> tuple[SQLiteInvestigationStore, InvestigationReadProjector]:
@@ -271,7 +300,7 @@ def test_noncontiguous_direction_history_fails_instead_of_selecting_a_current_di
 def test_summary_order_and_last_activity_use_persisted_timestamps(tmp_path: Path) -> None:
     store, projector = _projector(tmp_path)
     earlier = _investigation("earlier")
-    later = _investigation("later")
+    later = _investigation("later", association="another-case")
     store.add_investigation(earlier)
     store.add_investigation(later)
     later_proposal = _proposal("later-proposal", TIME + timedelta(minutes=10))
@@ -285,11 +314,326 @@ def test_summary_order_and_last_activity_use_persisted_timestamps(tmp_path: Path
 
 def test_summary_ties_break_deterministically_by_investigation_id(tmp_path: Path) -> None:
     store, projector = _projector(tmp_path)
-    store.add_investigation(_investigation("investigation-a"))
-    store.add_investigation(_investigation("investigation-b"))
+    store.add_investigation(_investigation("investigation-a", association="case-a"))
+    store.add_investigation(_investigation("investigation-b", association="case-b"))
     assert [item.investigation_id for item in projector.list_investigations()] == [
         "investigation-b", "investigation-a"
     ]
+    store.close()
+
+
+@pytest.mark.parametrize("claimed", (False, True))
+def test_pending_or_running_latest_operation_projects_agent_working(
+    tmp_path: Path, claimed: bool
+) -> None:
+    store, projector = _projector(tmp_path)
+    investigation = _investigation()
+    operation = _operation()
+    store.add_investigation_with_pending_start_operation(investigation, operation)
+    if claimed:
+        assert store.claim_pending_operation(
+            operation.operation_id, "runner-private", TIME + timedelta(minutes=1)
+        )
+
+    detail = projector.detail(investigation.investigation_id)
+
+    assert detail.lifecycle_state is PersistedLifecycleState.AGENT_WORKING
+    assert detail.attention_reason is None
+    assert detail.latest_operation is not None
+    assert detail.latest_operation.operation_id == operation.operation_id
+    assert detail.latest_operation.status == ("RUNNING" if claimed else "PENDING_RENDER")
+    assert not hasattr(detail.latest_operation, "runner_instance_id")
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("terminal_status", "expected_reason", "expected_failure"),
+    (
+        ("FAILED", AttentionReason.OPERATION_FAILED, "REQUEST_TIMEOUT"),
+        ("INTERRUPTED", AttentionReason.OPERATION_INTERRUPTED, None),
+    ),
+)
+def test_terminal_latest_operation_projects_safe_attention(
+    tmp_path: Path,
+    terminal_status: str,
+    expected_reason: AttentionReason,
+    expected_failure: str | None,
+) -> None:
+    store, projector = _projector(tmp_path)
+    investigation = _investigation()
+    operation = _operation()
+    store.add_investigation_with_pending_start_operation(investigation, operation)
+    assert store.claim_pending_operation(
+        operation.operation_id, "runner-private", TIME + timedelta(minutes=1)
+    )
+    if terminal_status == "FAILED":
+        store.mark_operation_failed(
+            operation.operation_id,
+            "runner-private",
+            "REQUEST_TIMEOUT",
+            TIME + timedelta(minutes=2),
+        )
+    else:
+        store.mark_operation_interrupted(
+            operation.operation_id,
+            "runner-private",
+            TIME + timedelta(minutes=2),
+        )
+
+    detail = projector.detail(investigation.investigation_id)
+
+    assert detail.lifecycle_state is PersistedLifecycleState.ATTENTION
+    assert detail.attention_reason is expected_reason
+    assert detail.latest_operation is not None
+    assert detail.latest_operation.status == terminal_status
+    assert detail.latest_operation.failure_category == expected_failure
+    store.close()
+
+
+def test_context_attention_precedes_pending_operation_projection(tmp_path: Path) -> None:
+    store, projector = _projector(tmp_path)
+    investigation = _investigation(association=None)
+    operation = _operation()
+    store.add_investigation_with_pending_start_operation(investigation, operation)
+
+    detail = projector.detail(investigation.investigation_id)
+
+    assert detail.lifecycle_state is PersistedLifecycleState.ATTENTION
+    assert detail.attention_reason is AttentionReason.MISSING_PACKAGE_ASSOCIATION
+    assert detail.latest_operation is not None
+    assert detail.latest_operation.status == "PENDING_RENDER"
+    store.close()
+
+
+def test_durable_decline_operation_precedes_legacy_incomplete_decline_fallback(
+    tmp_path: Path,
+) -> None:
+    store, projector = _projector(tmp_path)
+    investigation, original = _investigation(), _proposal()
+    decision = HumanDecision(
+        "decline-001",
+        original.proposal_id,
+        "DECLINE",
+        TIME + timedelta(minutes=1),
+        "Use another direction.",
+    )
+    operation = _operation(
+        operation_type="DECLINE_REDIRECT",
+        triggering_proposal_id=original.proposal_id,
+        triggering_decision_id=decision.decision_id,
+        created_at=TIME + timedelta(minutes=1),
+    )
+    store.add_investigation(investigation)
+    store.add_proposal(investigation.investigation_id, original)
+    store.persist_decline_with_pending_operation(original, decision, operation)
+
+    working = projector.detail(investigation.investigation_id)
+    assert working.lifecycle_state is PersistedLifecycleState.AGENT_WORKING
+    assert working.attention_reason is None
+
+    assert store.claim_pending_operation(
+        operation.operation_id, "runner-private", TIME + timedelta(minutes=2)
+    )
+    store.mark_operation_failed(
+        operation.operation_id,
+        "runner-private",
+        "GENERATION_ERROR",
+        TIME + timedelta(minutes=3),
+    )
+    failed = projector.detail(investigation.investigation_id)
+    assert failed.lifecycle_state is PersistedLifecycleState.ATTENTION
+    assert failed.attention_reason is AttentionReason.OPERATION_FAILED
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("operation_status", "expected_lifecycle"),
+    (
+        ("PENDING_RENDER", PersistedLifecycleState.AGENT_WORKING),
+        ("RUNNING", PersistedLifecycleState.AGENT_WORKING),
+        ("FAILED", PersistedLifecycleState.ATTENTION),
+        ("INTERRUPTED", PersistedLifecycleState.ATTENTION),
+    ),
+)
+def test_modify_without_revision_is_valid_while_no_matching_attempt_completed(
+    tmp_path: Path,
+    operation_status: str,
+    expected_lifecycle: PersistedLifecycleState,
+) -> None:
+    store, projector = _projector(tmp_path)
+    investigation, original = _investigation(), _proposal()
+    decision = HumanDecision(
+        "modify-001",
+        original.proposal_id,
+        "MODIFY",
+        TIME + timedelta(minutes=1),
+        "Narrow the review.",
+    )
+    operation = _operation(
+        operation_type="MODIFY",
+        triggering_proposal_id=original.proposal_id,
+        triggering_decision_id=decision.decision_id,
+        created_at=TIME + timedelta(minutes=1),
+    )
+    store.add_investigation(investigation)
+    store.add_proposal(investigation.investigation_id, original)
+    store.persist_modify_with_pending_operation(original, decision, operation)
+    if operation_status != "PENDING_RENDER":
+        assert store.claim_pending_operation(
+            operation.operation_id, "runner-private", TIME + timedelta(minutes=2)
+        )
+    if operation_status == "FAILED":
+        store.mark_operation_failed(
+            operation.operation_id,
+            "runner-private",
+            "GENERATION_ERROR",
+            TIME + timedelta(minutes=3),
+        )
+    elif operation_status == "INTERRUPTED":
+        store.mark_operation_interrupted(
+            operation.operation_id,
+            "runner-private",
+            TIME + timedelta(minutes=3),
+        )
+
+    detail = projector.detail(investigation.investigation_id)
+
+    assert detail.lifecycle_state is expected_lifecycle
+    assert detail.active_proposal is None
+    store.close()
+
+
+def test_completed_modify_without_revision_fails_projection_integrity(tmp_path: Path) -> None:
+    store, projector = _projector(tmp_path)
+    investigation, original = _investigation(), _proposal()
+    decision = HumanDecision(
+        "modify-001", original.proposal_id, "MODIFY",
+        TIME + timedelta(minutes=1), "Narrow the review.",
+    )
+    operation = _operation(
+        operation_type="MODIFY",
+        triggering_proposal_id=original.proposal_id,
+        triggering_decision_id=decision.decision_id,
+    )
+    store.add_investigation(investigation)
+    store.add_proposal(investigation.investigation_id, original)
+    store.persist_modify_with_pending_operation(original, decision, operation)
+    with store._connection:
+        store._connection.execute(
+            "UPDATE agent_operations SET status = 'COMPLETED' WHERE operation_id = ?",
+            (operation.operation_id,),
+        )
+
+    with pytest.raises(ProjectionIntegrityError, match="completed MODIFY"):
+        projector.detail(investigation.investigation_id)
+    store.close()
+
+
+def test_multiple_simultaneous_active_operations_fail_projection_integrity(
+    tmp_path: Path,
+) -> None:
+    store, projector = _projector(tmp_path)
+    investigation = _investigation()
+    store.add_investigation(investigation)
+    store.add_pending_operation(_operation("operation-001"))
+    store.add_pending_operation(
+        _operation("operation-002", created_at=TIME + timedelta(minutes=1))
+    )
+
+    with pytest.raises(ProjectionIntegrityError, match="multiple active agent operations"):
+        projector.detail(investigation.investigation_id)
+    store.close()
+
+
+def test_completed_retry_supersedes_prior_failure(tmp_path: Path) -> None:
+    store, projector = _projector(tmp_path)
+    investigation = _investigation()
+    first = _operation("operation-first")
+    store.add_investigation_with_pending_start_operation(investigation, first)
+    assert store.claim_pending_operation(
+        first.operation_id, "runner-first", TIME + timedelta(minutes=1)
+    )
+    store.mark_operation_failed(
+        first.operation_id,
+        "runner-first",
+        "GENERATION_ERROR",
+        TIME + timedelta(minutes=2),
+    )
+    retry = _operation(
+        "operation-retry",
+        created_at=TIME + timedelta(minutes=3),
+        prior_attempt_operation_id=first.operation_id,
+    )
+    store.add_pending_operation(retry)
+    assert store.claim_pending_operation(
+        retry.operation_id, "runner-retry", TIME + timedelta(minutes=4)
+    )
+    proposal = _proposal("proposal-retry", TIME + timedelta(minutes=5))
+    store.complete_start_operation(
+        retry.operation_id,
+        "runner-retry",
+        _direction(),
+        proposal,
+        TIME + timedelta(minutes=5),
+    )
+
+    detail = projector.detail(investigation.investigation_id)
+
+    assert detail.lifecycle_state is PersistedLifecycleState.NEEDS_REVIEW
+    assert detail.attention_reason is None
+    assert detail.active_proposal == proposal
+    assert detail.latest_operation is not None
+    assert detail.latest_operation.operation_id == retry.operation_id
+    assert detail.latest_operation.status == "COMPLETED"
+    store.close()
+
+
+def test_operation_timestamps_contribute_to_last_activity(tmp_path: Path) -> None:
+    store, projector = _projector(tmp_path)
+    investigation = _investigation()
+    operation = _operation(created_at=TIME + timedelta(minutes=1))
+    store.add_investigation_with_pending_start_operation(investigation, operation)
+    assert projector.detail(investigation.investigation_id).last_activity == operation.created_at
+    claimed_at = TIME + timedelta(minutes=2)
+    assert store.claim_pending_operation(
+        operation.operation_id, "runner-private", claimed_at
+    )
+    assert projector.detail(investigation.investigation_id).last_activity == claimed_at
+    store.close()
+
+
+def test_landing_page_groups_associated_records_and_preserves_legacy_entries(
+    tmp_path: Path,
+) -> None:
+    store, projector = _projector(tmp_path)
+    older = _investigation("associated-older")
+    newer = InvestigationRecord(
+        "associated-newer",
+        "renamed-display-reference",
+        TIME,
+        TIME + timedelta(minutes=2),
+        "",
+        "case-42",
+    )
+    legacy_a = _investigation("legacy-a", association=None)
+    legacy_b = _investigation("legacy-b", association=None)
+    for investigation in (older, newer, legacy_a, legacy_b):
+        store.add_investigation(investigation)
+
+    summaries = projector.list_investigations()
+
+    assert {item.investigation_id for item in summaries} == {
+        "associated-newer",
+        "legacy-a",
+        "legacy-b",
+    }
+    assert sum(item.package_association == "case-42" for item in summaries) == 1
+    legacy = tuple(item for item in summaries if item.package_association is None)
+    assert len(legacy) == 2
+    assert all(
+        item.attention_reason is AttentionReason.MISSING_PACKAGE_ASSOCIATION
+        for item in legacy
+    )
     store.close()
 
 
