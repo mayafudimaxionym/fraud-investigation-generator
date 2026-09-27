@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop has an **APPROVED REMEDIATION ARCHITECTURE / IMPLEMENTATION IN PROGRESS** after manual acceptance exposed UI lifecycle defects. Remediation Tasks 1 and 2 now provide the durable operation persistence and service-orchestration boundary; read projection and Streamlit presentation do not yet use the visible acknowledgement flow.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop has an **APPROVED REMEDIATION ARCHITECTURE / IMPLEMENTATION IN PROGRESS** after manual acceptance exposed UI lifecycle defects. Remediation Tasks 1 and 2 are on `master`; Task 3 operation-aware read projection is implemented and verified on its delivery branch; Streamlit presentation does not yet use the visible acknowledgement flow.
 
 ## Architecture baseline
 
@@ -16,7 +16,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - `AGENTS.md` provides standing AI-development instructions.
 - `ROADMAP.md` is the authoritative milestone and sequencing reference.
 - `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the approved V0 milestone specification; its implementation and formal acceptance are complete.
-- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Manual acceptance exposed a discrepancy between persisted state and Streamlit presentation; durable-operation persistence and service orchestration are implemented, while read projection, Streamlit presentation, and lifecycle acceptance verification remain pending.
+- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Manual acceptance exposed a discrepancy between persisted state and Streamlit presentation; durable-operation persistence, service orchestration, and read projection are implemented, while Streamlit presentation and lifecycle acceptance verification remain pending.
 - Future milestones still require separate planning and approval.
 - `docs/ARCHITECTURE.md` remains the architecture baseline, and the synthetic-case fixture remains frozen unless framework testing identifies a concrete requirement.
 
@@ -33,6 +33,8 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - Task 1 persistence tests cover operation-trigger integrity, terminal-state safety, retry provenance, interruption, and rollback of partial generated results. The current full automated baseline is **270 passed, 1 skipped**; the skip remains the Windows physical-symlink environment limitation.
 - **V0.5 remediation Task 2 — IMPLEMENTED / AUTOMATED VERIFICATION PASSED.** The effective objective is the sole initial investigator input. The service can prepare START, MODIFY, and DECLINE as durable `PENDING_RENDER` operations without invoking the model; atomically claim and dispatch one operation; persist safe failure categories; complete generated results through Task 1's atomic boundaries; interrupt ambiguous previous-process work; and create explicit linked retry attempts without duplicating human decisions.
 - Task 2 adds service coverage for pre-dispatch durability, single-claim dispatch, authoritative Modify-before-generation state, categorized failure, retry identity/provenance, objective reconstruction, interruption without replay, and schema-v3 failure migration. The current full automated baseline is **275 passed, 1 skipped**.
+- **V0.5 remediation Task 3 — IMPLEMENTED / AUTOMATED VERIFICATION PASSED.** Read projection now preserves context-integrity precedence, derives Working and operation-specific Attention from the latest durable attempt, exposes only investigator-safe operation state, validates Modify revisions against matching attempts, rejects simultaneous active operations, and includes operation timestamps in activity ordering.
+- The landing projection now emits one current/latest investigation per safe package association while retaining separate unassociated legacy recovery entries. Focused coverage verifies context precedence, working, failure, interruption, retry supersession, Modify integrity, active-operation conflicts, activity timestamps, and package grouping. The current full automated baseline is **290 passed, 1 skipped**.
 - A minimal dependency-free Python project foundation exists.
 - Deterministic sub-seed derivation and reproducibility metadata are defined.
 - The canonical world includes entities, relationships, events, signals, private fraud campaigns, and the `CanonicalWorld` aggregate.
@@ -59,7 +61,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- Durable service orchestration, objective-only initial input, schema version 4 failure-category persistence, focused tests, and planning/status synchronization are implemented but not yet committed.
+- Task 3 operation-aware read projection, package-association grouping, and focused tests are implemented and verified for delivery on the dedicated Task 3 branch.
 - Local generated/runtime artifacts may exist outside version control, including `investigations.sqlite`, `output/`, and the external `antigravity_critic_v05.md` audit. They are not authoritative project state.
 
 ## Current blockers
@@ -69,9 +71,9 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Next approved step
 
-Implement **V0.5 remediation Task 3 — operation-aware read projection and package-association grouping**. Context integrity remains highest precedence. Otherwise, the latest operation attempt determines Agent working or operation-specific Attention before proposal/decision fallback; a later completed retry supersedes an earlier failed attempt. Modify-without-revision is valid only while matching attempts exist and none completed, completed Modify requires exactly one revision, and multiple simultaneous pending/running operations are projection-integrity failures. Operation timestamps contribute to activity. The landing list exposes one current/latest investigation per safe package association while retaining unassociated legacy recovery entries.
+After Task 3 is integrated, implement **V0.5 remediation Task 4 — Streamlit presentation and deterministic configuration**. Persist each model-bound request before rerendering; render Working before dispatch; use a real one-shot browser acknowledgement rather than a bare server rerun; dispatch only after atomic claim with a process-scoped runner identity; interrupt ambiguous prior-process work without replay; preserve presentation-only Back navigation; reconstruct Resume from authoritative persistence; present operation-specific recovery and explicit retry; and replace working-directory-dependent database selection with a repository-root default plus an explicit absolute deployment override.
 
-After Task 3, implement the visible Streamlit acknowledgement/dispatch flow with deterministic database configuration, followed by the required real lifecycle/integration verification. No WAL change is approved without a demonstrated locking requirement. No further synthetic-case work is approved; the fixture remains frozen. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
+After Task 4, add the required real Streamlit lifecycle/integration verification and repeat manual acceptance. No WAL change is approved without a demonstrated locking requirement. No further synthetic-case work is approved; the fixture remains frozen. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
 
 ## Architectural constraints
 
