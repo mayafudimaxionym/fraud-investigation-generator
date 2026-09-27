@@ -160,6 +160,25 @@ def operation_failure_message(category: str | None) -> str:
     }.get(category, "The investigation request could not be completed.")
 
 
+def operation_recovery_message(operation_type: str) -> str:
+    """Describe only the authoritative state left by an incomplete operation."""
+    return {
+        "START": "No proposal was created. No action was authorized.",
+        "MODIFY": (
+            "The original proposal remains MODIFIED. No completed revision was "
+            "created and no action was authorized."
+        ),
+        "DECLINE_REDIRECT": (
+            "The original proposal remains DECLINED. No replacement proposal was "
+            "created and no action was authorized."
+        ),
+        "DECLINE_RECONSIDER": (
+            "The original proposal remains DECLINED. No replacement proposal was "
+            "created and no action was authorized."
+        ),
+    }[operation_type]
+
+
 @_streamlit.cache_resource(show_spinner=False)
 def process_runner_instance_id() -> str:
     """Return one stable identity for the lifetime of this Streamlit process."""
@@ -265,7 +284,7 @@ def _render_attention(st: object, store: SQLiteInvestigationStore, catalog: Conf
             st.error(operation_failure_message(operation.failure_category))
         else:
             st.warning("The previous processing attempt was interrupted.")
-        st.write("The previous proposal remains in its prior authoritative state. No new action was authorized.")
+        st.write(operation_recovery_message(operation.operation_type))
         if st.button("Try again", disabled=service is None):
             _prepare_and_show(
                 st, lambda: service.prepare_retry(operation.operation_id)
@@ -275,6 +294,18 @@ def _render_attention(st: object, store: SQLiteInvestigationStore, catalog: Conf
         declined = next((item for item in detail.decision_history if item.decision_type == "DECLINE" and detail.current_or_last_proposal and item.proposal_id == detail.current_or_last_proposal.proposal_id), None)
         st.write("Your instruction is saved." if declined and declined.instruction_or_reason else "The previous proposal was declined without additional guidance.")
         st.write("The previous proposal remains DECLINED. No new proposal was created and no action was authorized.")
+        if (
+            declined is not None
+            and detail.current_or_last_proposal is not None
+            and st.button("Try again", disabled=service is None)
+        ):
+            _prepare_and_show(
+                st,
+                lambda: service.prepare_legacy_decline_reconsideration(
+                    detail.investigation.investigation_id,
+                    detail.current_or_last_proposal.proposal_id,
+                ),
+            )
     elif reason is AttentionReason.MISSING_PACKAGE_ASSOCIATION:
         st.error("This older investigation needs its case re-associated before it can continue.")
         cases = catalog.available_cases()

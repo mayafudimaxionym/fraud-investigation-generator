@@ -14,7 +14,12 @@ from investigation.approval_loop import (
     InvestigatorReadyServiceError,
 )
 from investigation.case_catalog import ConfiguredCaseCatalog, ConfiguredCasePackage
-from investigation.models import AnalyticalActionProposal, InvestigationRecord
+from investigation.models import (
+    AnalyticalActionProposal,
+    HumanDecision,
+    InvestigationDirection,
+    InvestigationRecord,
+)
 from investigation.persistence import SQLiteInvestigationStore
 from investigation.proposal_agent import (
     CandidateDirectionContent,
@@ -359,6 +364,77 @@ def test_decline_commits_before_failed_reconsideration_and_retry_does_not_duplic
     assert result is not None and result.replacement_proposal_id == replacement.proposal_id
     with pytest.raises(ValueError, match="persisted replacement"):
         service.retry_decline_reconsideration(state.investigation.investigation_id, original.proposal_id)
+    store.close()
+
+
+def test_legacy_incomplete_decline_can_prepare_one_durable_reconsideration(
+    tmp_path: Path,
+) -> None:
+    store, service, agent, preflight = _service(tmp_path)
+    investigation = InvestigationRecord(
+        "legacy-decline",
+        "development-case-42",
+        BASE_TIME,
+        BASE_TIME,
+        "Investigate.",
+        "case-42",
+    )
+    direction = InvestigationDirection(
+        "legacy-direction",
+        investigation.investigation_id,
+        1,
+        ("The activity may be coordinated.", "The activity may be legitimate."),
+        ("Review visible event timing.",),
+        BASE_TIME,
+        "INITIAL",
+    )
+    proposal = AnalyticalActionProposal(
+        "legacy-proposal",
+        "Review visible events.",
+        "Assess explanations.",
+        "Review is needed now.",
+        "visible_events.csv",
+        "A bounded summary.",
+        "PROPOSED",
+        BASE_TIME,
+    )
+    decision = HumanDecision(
+        "legacy-decline-decision",
+        proposal.proposal_id,
+        "DECLINE",
+        BASE_TIME,
+        "Review relationships instead.",
+    )
+    store.add_investigation(investigation)
+    store.add_direction(direction)
+    store.add_proposal(investigation.investigation_id, proposal)
+    store.persist_human_decision(proposal, decision)
+
+    operation = service.prepare_legacy_decline_reconsideration(
+        investigation.investigation_id, proposal.proposal_id
+    )
+
+    assert operation.operation_type == "DECLINE_RECONSIDER"
+    assert operation.status == "PENDING_RENDER"
+    assert operation.prior_attempt_operation_id is None
+    assert operation.triggering_decision_id == decision.decision_id
+    assert len(store.list_decisions(investigation.investigation_id)) == 1
+    assert preflight.calls == 0 and agent.requests == []
+    with pytest.raises(ValueError, match="already has a persisted operation"):
+        service.prepare_legacy_decline_reconsideration(
+            investigation.investigation_id, proposal.proposal_id
+        )
+
+    completed = service.claim_and_execute_operation(
+        operation.operation_id, "runner-legacy-decline"
+    )
+    assert completed is not None
+    assert len(completed.decisions) == 1
+    replacement = _initial_proposal(completed)
+    assert replacement.revised_from_proposal_id is None
+    result = store.get_decline_reconsideration_result(decision.decision_id)
+    assert result is not None
+    assert result.replacement_proposal_id == replacement.proposal_id
     store.close()
 
 

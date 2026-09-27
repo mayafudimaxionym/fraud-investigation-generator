@@ -396,6 +396,46 @@ class InvestigatorReadyApprovalLoopService:
         self._store.add_pending_operation(operation)
         return operation
 
+    def prepare_legacy_decline_reconsideration(
+        self, investigation_id: str, declined_proposal_id: str
+    ) -> AgentOperation:
+        """Create the first durable attempt for a legacy incomplete Decline."""
+        proposal = self._proposal_for_investigation(
+            investigation_id, declined_proposal_id
+        )
+        if proposal.status != "DECLINED":
+            raise ValueError("reconsideration requires a DECLINED proposal")
+        decision = self._decline_decision(investigation_id, declined_proposal_id)
+        if self._store.get_decline_reconsideration_result(decision.decision_id) is not None:
+            raise ValueError("decline decision already has a persisted replacement")
+        if any(
+            operation.triggering_decision_id == decision.decision_id
+            and operation.operation_type in (
+                "DECLINE_REDIRECT",
+                "DECLINE_RECONSIDER",
+            )
+            for operation in self._store.list_agent_operations(investigation_id)
+        ):
+            raise ValueError("decline decision already has a persisted operation")
+        if any(
+            item.status == "PROPOSED"
+            for item in self._store.list_proposals(investigation_id)
+        ):
+            raise ValueError("investigation already has another active PROPOSED proposal")
+        created_at = _utc_now()
+        operation = AgentOperation(
+            _new_identifier("operation"),
+            investigation_id,
+            "DECLINE_RECONSIDER",
+            "PENDING_RENDER",
+            created_at,
+            created_at,
+            proposal.proposal_id,
+            decision.decision_id,
+        )
+        self._store.add_pending_operation(operation)
+        return operation
+
     def claim_and_execute_operation(
         self, operation_id: str, runner_instance_id: str
     ) -> InvestigatorReadyState | None:

@@ -13,6 +13,7 @@ from investigation.app import (
     _render_working,
     configured_database_path,
     operation_failure_message,
+    operation_recovery_message,
     operation_working_label,
     optional_decline_reason,
     process_runner_instance_id,
@@ -277,6 +278,62 @@ def test_operation_attention_is_actionable_and_retry_is_prepared(
 
     assert calls == ["operation-prior"]
     assert any(kind == message_kind for kind, _ in st.rendered)
+
+
+@pytest.mark.parametrize(
+    ("operation_type", "expected"),
+    (
+        (
+            "START",
+            "No proposal was created. No action was authorized.",
+        ),
+        (
+            "MODIFY",
+            "The original proposal remains MODIFIED. No completed revision was created and no action was authorized.",
+        ),
+        (
+            "DECLINE_REDIRECT",
+            "The original proposal remains DECLINED. No replacement proposal was created and no action was authorized.",
+        ),
+        (
+            "DECLINE_RECONSIDER",
+            "The original proposal remains DECLINED. No replacement proposal was created and no action was authorized.",
+        ),
+    ),
+)
+def test_operation_recovery_copy_matches_authoritative_state(
+    operation_type: str, expected: str
+) -> None:
+    assert operation_recovery_message(operation_type) == expected
+
+
+def test_legacy_incomplete_decline_attention_prepares_first_durable_attempt() -> None:
+    st = _FakeStreamlit({"Try again"})
+    declined = _proposal("proposal-declined", "DECLINED")
+    decision = SimpleNamespace(
+        proposal_id=declined.proposal_id,
+        decision_type="DECLINE",
+        instruction_or_reason="Review relationships instead.",
+    )
+    detail = SimpleNamespace(
+        attention_reason=AttentionReason.DECLINE_RECONSIDERATION_INCOMPLETE,
+        investigation=SimpleNamespace(investigation_id="investigation-001"),
+        current_or_last_proposal=declined,
+        decision_history=(decision,),
+    )
+    calls: list[tuple[str, str]] = []
+    service = SimpleNamespace(
+        prepare_legacy_decline_reconsideration=lambda investigation_id, proposal_id: (
+            calls.append((investigation_id, proposal_id))
+            or SimpleNamespace(investigation_id=investigation_id)
+        )
+    )
+
+    with pytest.raises(_RerunRequested):
+        _render_attention(st, None, None, detail, service)
+
+    assert calls == [("investigation-001", "proposal-declined")]
+    assert ("write", "Your instruction is saved.") in st.rendered
 
 
 def test_every_persisted_failure_category_has_safe_investigator_copy() -> None:
