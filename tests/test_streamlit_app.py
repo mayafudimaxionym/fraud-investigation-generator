@@ -282,10 +282,15 @@ def test_running_work_never_attempts_another_dispatch(
         "investigation.app._render_acknowledged",
         lambda _: pytest.fail("RUNNING must not request another acknowledgement"),
     )
+    refreshes: list[str] = []
+    monkeypatch.setattr(
+        "investigation.app._schedule_running_refresh", refreshes.append
+    )
 
     _render_working(st, detail, service, "runner-process")
 
     assert ("subheader", "Revising proposed action") in st.rendered
+    assert refreshes == ["operation-001"]
 
 
 @pytest.mark.parametrize(

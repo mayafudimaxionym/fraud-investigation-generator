@@ -16,6 +16,7 @@ from investigation.approval_loop import InvestigatorReadyApprovalLoopService
 from investigation.case_catalog import DEFAULT_LOCAL_CASE_CATALOG
 from investigation.persistence import SQLiteInvestigationStore
 from investigation.proposal_agent import (
+    LocalProposalAgent,
     ProposalModelError,
     ProposalModelFailureCategory,
 )
@@ -192,6 +193,31 @@ def _run_with_acknowledgement(
         element_tree.get_widget_state = original
 
 
+def _run_with_running_refresh(
+    app: AppTest, operation_id: str, *, timeout: float = 15
+) -> AppTest:
+    original = element_tree.get_widget_state
+
+    def refreshed(node):
+        if (
+            isinstance(node, element_tree.UnknownElement)
+            and node.type == "bidi_component"
+        ):
+            return WidgetState(
+                id=node.proto.id,
+                json_trigger_value=json.dumps(
+                    {"refresh_nonce": f"{operation_id}:completed"}
+                ),
+            )
+        return original(node)
+
+    element_tree.get_widget_state = refreshed
+    try:
+        return app.run(timeout=timeout)
+    finally:
+        element_tree.get_widget_state = original
+
+
 def _start_pending_investigation(
     app: AppTest, database_path: Path, objective: str = "Investigate the report."
 ) -> tuple[str, str]:
@@ -260,6 +286,71 @@ def test_start_renders_working_before_delayed_dispatch_and_survives_navigation(
     assert len(client.prompts) == 1
     with SQLiteInvestigationStore(database_path) as store:
         assert len(store.list_proposals(investigation_id)) == 1
+
+
+def test_resumed_running_operation_automatically_refreshes_to_needs_review(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "resumed-running-refresh.sqlite"
+    client = _LifecycleProposalClient()
+    app = _app(database_path, client)
+    investigation_id, operation_id = _start_pending_investigation(
+        app, database_path, "Persisted objective."
+    )
+    client.delay_next_generation()
+    worker_errors: list[BaseException] = []
+
+    def execute_operation() -> None:
+        try:
+            with SQLiteInvestigationStore(database_path) as store:
+                service = InvestigatorReadyApprovalLoopService(
+                    store,
+                    DEFAULT_LOCAL_CASE_CATALOG,
+                    LocalProposalAgent(client),
+                    client,
+                )
+                service.claim_and_execute_operation(
+                    operation_id, "lifecycle-test-runner"
+                )
+        except BaseException as error:  # pragma: no cover - asserted in caller
+            worker_errors.append(error)
+
+    worker = threading.Thread(target=execute_operation)
+    worker.start()
+    assert client.started.wait(timeout=5)
+    assert _operation(database_path, investigation_id).status == "RUNNING"
+
+    app.run()
+    assert "Preparing investigation approach" in [
+        item.value for item in app.subheader
+    ]
+    _button(app, "← Back to Investigations").click().run()
+    assert app.title[0].value == "Investigations"
+    assert any("Agent Working" in item.value for item in app.markdown)
+    _button(app, "Resume").click().run()
+    assert "Preparing investigation approach" in [
+        item.value for item in app.subheader
+    ]
+
+    client.release.set()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert worker_errors == []
+    assert _operation(database_path, investigation_id).status == "COMPLETED"
+
+    _run_with_running_refresh(app, operation_id)
+
+    assert "Proposed next analytical action" in [
+        item.value for item in app.subheader
+    ]
+    assert "Preparing investigation approach" not in [
+        item.value for item in app.subheader
+    ]
+    assert len(client.prompts) == 1
+    with SQLiteInvestigationStore(database_path) as store:
+        assert len(store.list_agent_operations(investigation_id)) == 1
+        assert len(store.list_proposals(investigation_id)) == 1
+        assert len(store.list_directions(investigation_id)) == 1
 
 
 def test_modify_and_decline_each_dispatch_once_and_render_authoritative_result(

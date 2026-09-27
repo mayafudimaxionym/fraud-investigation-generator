@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **IMPLEMENTED / AUTOMATICALLY VERIFIED / NOT YET ACCEPTANCE-VERIFIED**. Remediation Tasks 1–4, the required Streamlit lifecycle automation, and the approved human semantic-review boundary are implemented and passing. Qualified-model selection and recorded manual acceptance remain pending.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **IMPLEMENTED / AUTOMATICALLY VERIFIED / NOT YET ACCEPTANCE-VERIFIED**. Remediation Tasks 1–4, the required Streamlit lifecycle automation, and the approved human semantic-review boundary are implemented and passing. Manual acceptance was attempted against commit `13922af`; the tested model failed semantic qualification and exposed an open completion-refresh presentation defect. Qualified-model selection and successful recorded manual acceptance remain pending.
 
 ## Architecture baseline
 
@@ -39,6 +39,8 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - **Required Streamlit lifecycle automation — IMPLEMENTED / PASSING.** Real Streamlit/session/rerun integration coverage verifies START, MODIFY, DECLINE/redirect, failure/retry, interruption, refresh idempotency, one generation call per durable operation, authoritative final projection, and human semantic-review context.
 - **V0.5 semantic-enforcement boundary — APPROVED.** Python validates response structure, explicit private-reference safeguards, canonical-state ownership, durable lifecycle, lineage, and atomicity, but does not use lexical heuristics to certify arbitrary natural-language meaning. Semantic adequacy of direction, action narrowness, and responsiveness to Modify/Decline text is judged by the investigator at runtime and by manual acceptance for the qualified local model configuration. One generation call remains permitted per durable operation; no second semantic evaluator, automatic repair call, structured investigator controls, or hidden retry is added.
 - `llama3:8b` is no longer a required qualified V0.5 baseline. It may remain configurable, but V0.5 acceptance must record a local model/version/settings/prompt configuration that passes representative INITIAL, MODIFY, and DECLINE/redirect semantic scenarios.
+- **V0.5 manual acceptance attempt — FAILED / FOLLOW-UP REQUIRED.** Manual acceptance was attempted against commit `13922af` with Ollama `0.34.3` and `llama3:8b` digest `365c0bd…d8ad1`. The model failed semantic qualification in all three representative scenarios: Initial produced narrowly benign competing explanations and a shallow, generic two-step plan; Modify changed data and expected output but did not apply the requested raw-row limitation; Decline/redirect produced an independent relationship-focused replacement action with correct declined-proposal lineage, but left the investigation direction unchanged instead of genuinely redirecting it.
+- The same acceptance attempt found an open presentation defect: after Back and Resume during a running operation, the visible Working screen did not transition to the authoritative terminal projection when processing completed unless the browser was manually reloaded. The completion-refresh remediation is implemented locally but remains open pending review and acceptance retest. V0.5 remains not acceptance-verified.
 - A minimal dependency-free Python project foundation exists.
 - Deterministic sub-seed derivation and reproducibility metadata are defined.
 - The canonical world includes entities, relationships, events, signals, private fraud campaigns, and the `CanonicalWorld` aggregate.
@@ -65,17 +67,19 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- Task 4 presentation/lifecycle remediation and the human semantic-review boundary are implemented and automatically verified for independent review.
+- A presentation-only completion-refresh remediation and focused real Streamlit lifecycle coverage are implemented for independent review. The durable-operation dispatch, semantic contract, and human semantic-review boundary are unchanged.
 - Local generated/runtime artifacts may exist outside version control, including `investigations.sqlite`, `output/`, external `antigravity_critic_v05*.md` audits, and manual-acceptance databases. They are not authoritative project state.
 
 ## Current blockers
 
+- No recorded local model/version/settings/prompt configuration has passed the representative V0.5 Initial, Modify, and Decline/redirect semantic scenarios; `llama3:8b` digest `365c0bd…d8ad1` failed all three.
+- The completion-refresh acceptance finding remains open until the local remediation is independently reviewed and manually retested.
 - Factual customer, support, and operational artifacts are structured and grounded, but are not yet realistic human documents. This remains a future concern and is intentionally outside the frozen synthetic-case fixture.
 - `python -m pip install -e .` has a known pre-existing setuptools flat-layout package-discovery tooling issue. It is not a V0 functional failure and did not prevent local runtime acceptance.
 
 ## Next approved step
 
-Perform **qualified-model testing and manual V0.5 acceptance** using a recorded local model, model version, settings, and prompt configuration. Manual acceptance must verify meaningful direction, action narrowness, and representative Modify/Decline responsiveness. Do not mark V0.5 acceptance-verified until that recorded configuration passes the approved scenarios.
+Review and manually retest the completion-refresh remediation, then perform **qualified-model testing and manual V0.5 acceptance** using a recorded local model, model version, settings, and prompt configuration. Manual acceptance must verify meaningful direction, action narrowness, and representative Modify/Decline responsiveness. Do not mark V0.5 acceptance-verified until the presentation finding is closed and that recorded configuration passes the approved scenarios.
 
 No WAL change is approved without a demonstrated locking requirement. No further synthetic-case work is approved; the fixture remains frozen. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
 

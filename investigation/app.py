@@ -55,6 +55,22 @@ _RENDER_ACKNOWLEDGEMENT = _streamlit.components.v2.component(
     """,
 )
 
+_RUNNING_OPERATION_REFRESH = _streamlit.components.v2.component(
+    "running_operation_refresh",
+    js="""
+    export default function(component) {
+        const { data, setTriggerValue } = component;
+        const timeoutId = setTimeout(() => {
+            setTriggerValue(
+                "refresh_nonce",
+                `${data.operationId}:${Date.now()}`,
+            );
+        }, data.delayMs);
+        return () => { clearTimeout(timeoutId); };
+    }
+    """,
+)
+
 
 def configured_database_path(
     environment: Mapping[str, str] | None = None,
@@ -242,6 +258,14 @@ def _render_acknowledged(operation_id: str) -> bool:
         on_acknowledged_operation_id_change=lambda: None,
     )
     return result.acknowledged_operation_id == operation_id
+
+
+def _schedule_running_refresh(operation_id: str) -> None:
+    _RUNNING_OPERATION_REFRESH(
+        data={"operationId": operation_id, "delayMs": 1000},
+        key=f"operation-refresh-{operation_id}",
+        on_refresh_nonce_change=lambda: None,
+    )
 
 
 def _render_list(st: object, projector: InvestigationReadProjector) -> None:
@@ -452,6 +476,9 @@ def _render_working(
         return
     st.subheader(operation_working_label(operation.operation_type))
     st.info("The agent is working. No new action is authorized during processing.")
+    if operation.status == "RUNNING":
+        _schedule_running_refresh(operation.operation_id)
+        return
     if operation.status != "PENDING_RENDER":
         return
     if service is None:
