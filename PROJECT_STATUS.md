@@ -2,7 +2,7 @@
 
 ## Current stage
 
-V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop has an **APPROVED REMEDIATION ARCHITECTURE / IMPLEMENTATION IN PROGRESS** after manual acceptance exposed UI lifecycle defects. Remediation Tasks 1 and 2 are on `master`; Task 3 operation-aware read projection is implemented and verified on its delivery branch; Streamlit presentation does not yet use the visible acknowledgement flow.
+V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.5 — Investigator-Ready Investigation Loop is **IMPLEMENTED / AUTOMATICALLY VERIFIED / NOT YET ACCEPTANCE-VERIFIED**. Remediation Tasks 1–4, the required Streamlit lifecycle automation, and the approved human semantic-review boundary are implemented and passing. Qualified-model selection and recorded manual acceptance remain pending.
 
 ## Architecture baseline
 
@@ -16,7 +16,7 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - `AGENTS.md` provides standing AI-development instructions.
 - `ROADMAP.md` is the authoritative milestone and sequencing reference.
 - `docs/specs/V0_AGENT_HUMAN_APPROVAL_LOOP.md` is the approved V0 milestone specification; its implementation and formal acceptance are complete.
-- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Manual acceptance exposed a discrepancy between persisted state and Streamlit presentation; durable-operation persistence, service orchestration, and read projection are implemented, while Streamlit presentation and lifecycle acceptance verification remain pending.
+- `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` is the approved V0.5 behavior, scope, and acceptance specification. Durable-operation persistence, service orchestration, read projection, Streamlit presentation, deterministic structural validation, and lifecycle automation are implemented and automatically verified. Qualified-model testing and manual semantic acceptance remain pending, so V0.5 is not yet acceptance-verified.
 - Future milestones still require separate planning and approval.
 - `docs/ARCHITECTURE.md` remains the architecture baseline, and the synthetic-case fixture remains frozen unless framework testing identifies a concrete requirement.
 
@@ -35,6 +35,10 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 - Task 2 adds service coverage for pre-dispatch durability, single-claim dispatch, authoritative Modify-before-generation state, categorized failure, retry identity/provenance, objective reconstruction, interruption without replay, and schema-v3 failure migration. The current full automated baseline is **275 passed, 1 skipped**.
 - **V0.5 remediation Task 3 — IMPLEMENTED / AUTOMATED VERIFICATION PASSED.** Read projection now preserves context-integrity precedence, derives Working and operation-specific Attention from the latest durable attempt, exposes only investigator-safe operation state, validates Modify revisions against matching attempts, rejects simultaneous active operations, and includes operation timestamps in activity ordering.
 - The landing projection now emits one current/latest investigation per safe package association while retaining separate unassociated legacy recovery entries. Focused coverage verifies context precedence, working, failure, interruption, retry supersession, Modify integrity, active-operation conflicts, activity timestamps, and package grouping. The current full automated baseline is **290 passed, 1 skipped**.
+- **V0.5 remediation Task 4 — IMPLEMENTED / AUTOMATED VERIFICATION PASSED.** Streamlit persists each model-bound request before rerendering, renders Working before a one-shot browser acknowledgement and atomic claim, uses process-scoped runner identity, reconstructs Resume from authoritative persistence, preserves presentation-only Back navigation, exposes operation-specific recovery and explicit retry, and uses deterministic database configuration.
+- **Required Streamlit lifecycle automation — IMPLEMENTED / PASSING.** Real Streamlit/session/rerun integration coverage verifies START, MODIFY, DECLINE/redirect, failure/retry, interruption, refresh idempotency, one generation call per durable operation, authoritative final projection, and human semantic-review context.
+- **V0.5 semantic-enforcement boundary — APPROVED.** Python validates response structure, explicit private-reference safeguards, canonical-state ownership, durable lifecycle, lineage, and atomicity, but does not use lexical heuristics to certify arbitrary natural-language meaning. Semantic adequacy of direction, action narrowness, and responsiveness to Modify/Decline text is judged by the investigator at runtime and by manual acceptance for the qualified local model configuration. One generation call remains permitted per durable operation; no second semantic evaluator, automatic repair call, structured investigator controls, or hidden retry is added.
+- `llama3:8b` is no longer a required qualified V0.5 baseline. It may remain configurable, but V0.5 acceptance must record a local model/version/settings/prompt configuration that passes representative INITIAL, MODIFY, and DECLINE/redirect semantic scenarios.
 - A minimal dependency-free Python project foundation exists.
 - Deterministic sub-seed derivation and reproducibility metadata are defined.
 - The canonical world includes entities, relationships, events, signals, private fraud campaigns, and the `CanonicalWorld` aggregate.
@@ -61,8 +65,8 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- Task 3 operation-aware read projection, package-association grouping, and focused tests are implemented and verified for delivery on the dedicated Task 3 branch.
-- Local generated/runtime artifacts may exist outside version control, including `investigations.sqlite`, `output/`, and the external `antigravity_critic_v05.md` audit. They are not authoritative project state.
+- Task 4 presentation/lifecycle remediation and the human semantic-review boundary are implemented and automatically verified for independent review.
+- Local generated/runtime artifacts may exist outside version control, including `investigations.sqlite`, `output/`, external `antigravity_critic_v05*.md` audits, and manual-acceptance databases. They are not authoritative project state.
 
 ## Current blockers
 
@@ -71,9 +75,9 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Next approved step
 
-After Task 3 is integrated, implement **V0.5 remediation Task 4 — Streamlit presentation and deterministic configuration**. Persist each model-bound request before rerendering; render Working before dispatch; use a real one-shot browser acknowledgement rather than a bare server rerun; dispatch only after atomic claim with a process-scoped runner identity; interrupt ambiguous prior-process work without replay; preserve presentation-only Back navigation; reconstruct Resume from authoritative persistence; present operation-specific recovery and explicit retry; and replace working-directory-dependent database selection with a repository-root default plus an explicit absolute deployment override.
+Perform **qualified-model testing and manual V0.5 acceptance** using a recorded local model, model version, settings, and prompt configuration. Manual acceptance must verify meaningful direction, action narrowness, and representative Modify/Decline responsiveness. Do not mark V0.5 acceptance-verified until that recorded configuration passes the approved scenarios.
 
-After Task 4, add the required real Streamlit lifecycle/integration verification and repeat manual acceptance. No WAL change is approved without a demonstrated locking requirement. No further synthetic-case work is approved; the fixture remains frozen. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
+No WAL change is approved without a demonstrated locking requirement. No further synthetic-case work is approved; the fixture remains frozen. V1 — Controlled Analytical Execution has not started and requires separate planning and approval.
 
 ## Architectural constraints
 

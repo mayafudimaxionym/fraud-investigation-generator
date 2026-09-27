@@ -83,6 +83,22 @@ Contextual claims and prior interpretations are evidence inputs or possible expl
 
 V0.5 does not introduce persistent Hypothesis, Finding, Evidence, confidence-score, or evidence-graph models.
 
+### Semantic-enforcement boundary
+
+V0.5 preserves free-text objectives, Modify instructions, and Decline guidance. Python validates only objectively machine-checkable response properties: the approved JSON shape; one proposal containing the five required non-blank textual fields; at least two non-blank competing-explanation entries; at least two non-blank ordered plan steps; no exactly duplicated explanation or plan entries after trivial whitespace/case normalization; no model-assigned canonical state; and no explicit known evaluator-only/private-source references. Durable operation, decision, proposal-lineage, atomicity, and no-execution invariants remain deterministically enforced.
+
+Python does not use keyword overlap, edit distance, text-similarity thresholds, embeddings, mandatory stage labels, or other lexical proxies to certify semantic adequacy. It does not claim to prove that explanations are genuinely distinct, a plan is sufficient, an action is narrower than the direction, a response is non-contradictory, a Modify result materially follows its instruction, or a Decline replacement materially follows redirection guidance. Those are model-quality expectations subject to investigator judgment and manual acceptance.
+
+The generation prompt should request a genuine broader investigation direction using a semantic rubric rather than a fixed stage taxonomy. Where relevant, a useful plan decomposes the objective into investigable questions, identifies governed evidence, examines behavioral and relational patterns, maintains competing explanations, includes corroboration/contradiction and limitation checks, follows a sensible sequence, and leads toward synthesis. The plan remains an ordered list of two or more textual steps; no fixed five-stage count, prescribed prefix, or mandatory stage name is approved.
+
+Needs Review presents the effective objective and, when applicable, the persisted Modify instruction or Decline guidance together with the generated direction and proposal. Previous and newly generated direction content is available when needed to assess redirection. The UI states that the content is AI-generated and provisional, asks the investigator to verify that it follows the instruction and is appropriately scoped, and states that no action is authorized until approval. The application does not claim that an instruction was followed merely because the output is structurally valid.
+
+A structurally valid but substantively weak response is persisted and presented as Needs Review rather than failed by a heuristic or silently regenerated. The investigator may Approve, Modify, or Decline it. A weak broader direction is corrected through the existing Decline/Adjust investigation plan flow. A structurally invalid response fails safely as `GENERATION_ERROR`; Attention explains that the response did not satisfy the required response contract, that no new proposal was saved and no action was authorized, and offers explicit Try again where appropriate.
+
+One durable operation permits one model generation call. Availability/model preflight is not a generation call. There is no second semantic-adjudication call, automatic repair call, or hidden retry in V0.5. Explicit retry creates a new durable operation identity.
+
+`llama3:8b` is not a required qualified V0.5 baseline. It may remain configurable, but acceptance must record a local model, version, settings, and prompt configuration that pass representative INITIAL, MODIFY, and DECLINE/redirect semantic scenarios. Repeated inadequate directions or unresponsive decision flows fail manual acceptance; model qualification is not treated as deterministic semantic proof.
+
 ## InvestigationDirection
 
 `InvestigationDirection` is a lightweight, persisted, versioned snapshot for investigation continuity, Resume, and minimal provenance. It contains:
@@ -94,6 +110,8 @@ V0.5 does not introduce persistent Hypothesis, Finding, Evidence, confidence-sco
 - minimal provenance/trigger, such as `INITIAL`, `MODIFY`, or `DECLINE_REDIRECT`, with a relevant proposal or decision trigger where appropriate.
 
 Direction versions append rather than overwrite. Normal UI shows the current version while prior versions remain available for provenance. For V0.5, ordered textual lists stored as structured JSON text in SQLite are acceptable and preferred over relational hypothesis/plan entities.
+
+Whether to append a direction version is determined by content rather than semantic scoring. If returned direction content is unchanged after trivial normalization, the current version remains authoritative. If it differs, a new version is appended. The new version records changed model output but does not certify that the change is material or adequate.
 
 Direction is not a formal hypothesis, finding, evidence record, confidence score, executable task, institutional-memory record, or general provenance graph. Formal knowledge modeling remains deferred.
 
@@ -111,9 +129,9 @@ Approve is terminal for the V0.5 cycle and creates no analytical result.
 
 ### Modify
 
-Modify keeps the basic action but changes it according to the investigator instruction. The original proposal becomes `MODIFIED`, its immutable Modify decision/instruction persists, and a `MODIFY` operation becomes pending render in one authoritative transition. No revision exists at that point. After the Working screen has rendered and the operation is claimed, the agent receives safe current direction, original proposal, and instruction. Success persists a new five-field `PROPOSED` revision with explicit revision lineage, any materially changed direction, and completes the operation. It then returns to Needs review and requires a fresh decision. Failure leaves the original proposal modified with no revision and exposes Attention.
+Modify keeps the basic action but changes it according to the investigator instruction. The original proposal becomes `MODIFIED`, its immutable Modify decision/instruction persists, and a `MODIFY` operation becomes pending render in one authoritative transition. No revision exists at that point. After the Working screen has rendered and the operation is claimed, the agent receives safe current direction, original proposal, and instruction. Success persists a new five-field `PROPOSED` revision with explicit revision lineage, any textually changed direction version under the deterministic content boundary, and completes the operation. It then returns to Needs review and requires a fresh decision. Failure leaves the original proposal modified with no revision and exposes Attention.
 
-Modify may append a new `InvestigationDirection` version only when direction materially changes; otherwise the current direction remains authoritative. Modify never implies approval.
+Modify appends a new `InvestigationDirection` version when returned direction content differs from the current version after trivial normalization; unchanged content retains the current version. This records changed text without certifying semantic materiality. Modify never implies approval.
 
 ### Decline and redirect
 
@@ -181,10 +199,10 @@ V0.5 is complete only when all of these are demonstrated:
 1. Investigations can be started and resumed without UUIDs or package paths.
 2. Safe package loading preserves evaluator/private isolation and governed initial context.
 3. The investigator can keep, edit, replace, or remove the suggested objective.
-4. Initial and revised output presents meaningful competing explanations, a genuine multi-step provisional plan, and exactly one five-field proposal whose action is narrower than the direction.
+4. Automated verification confirms at least two non-blank competing-explanation entries, at least two non-blank ordered plan steps, and exactly one five-field proposal without imposing a fixed stage taxonomy. Manual acceptance confirms that the qualified model configuration produces meaningful competing explanations, a genuine multi-step provisional plan, and a proposed action narrower than the direction in representative scenarios; the review UI presents the objective and generated content together for investigator judgment.
 5. Approve persists and presents the exact approved action without execution.
-6. Modify persists its instruction and modified original before generation; success produces a materially responsive revision-lineage proposal and requires fresh review, while failure leaves no revision and presents Attention.
-7. Decline commits permanently before reconsideration; guidance is materially accounted for or explicitly constrained, and success can redirect direction and create an independent fresh proposal.
+6. Modify persists its instruction and modified original before generation; structurally valid success produces a revision-lineage proposal and requires fresh review with the instruction and generated result shown together, while failure leaves no revision and presents Attention. Manual acceptance confirms materially responsive Modify behavior for the qualified model configuration; runtime semantic adequacy remains an investigator judgment.
+7. Decline commits permanently before reconsideration; structurally valid success can redirect direction and creates an independent fresh proposal shown with the persisted guidance for fresh review. Manual acceptance confirms that the qualified model configuration materially accounts for representative redirection guidance; runtime semantic adequacy remains an investigator judgment.
 8. Resume reconstructs lifecycle state, current direction, outstanding/approved action, and history.
 9. Ollama preflight reports unavailable service/model as Attention without substitution.
 10. Working renders before model dispatch; slow local inference remains visibly Agent working rather than a false failure.
@@ -198,8 +216,8 @@ V0.5 is complete only when all of these are demonstrated:
 1. **Durable operation foundation — complete.** Domain lifecycle, trigger validation, atomic pending transitions, claim, interruption, retry lineage, and atomic successful completion are implemented in the model and SQLite persistence layer.
 2. **Durable service orchestration — complete.** The effective objective is the sole initial input; safe failure categories persist; START/MODIFY/DECLINE prepare without model invocation; one claimant dispatches; success completes atomically; and failure/interruption/retry state is durable.
 3. **Read-model realignment — complete.** Context and latest-attempt precedence, safe operation projection, attempt-aware Modify revision integrity, single-active-operation integrity, operation activity, and one current/latest summary per package association are implemented and covered by focused tests.
-4. **Streamlit remediation and deterministic configuration — next after Task 3 integration.** Persist model-bound actions before rerendering; render Working before dispatch; acknowledge once through a real browser callback; use a process-scoped runner and interrupt prior-process ambiguity without replay; preserve navigation semantics; resume from authoritative state; expose categorized recovery and explicit retry; and replace working-directory-dependent database selection with deterministic deployment configuration.
-5. **Lifecycle/integration verification and acceptance.** Exercise the actual Streamlit rerun/session boundary and repeat manual acceptance before declaring V0.5 complete.
+4. **Streamlit remediation and deterministic configuration — next after Task 3 integration.** Persist model-bound actions before rerendering; render Working before dispatch; acknowledge once through a real browser callback; use a process-scoped runner and interrupt prior-process ambiguity without replay; preserve navigation semantics; resume from authoritative state; expose categorized recovery and explicit retry; replace working-directory-dependent database selection with deterministic deployment configuration; remove the rejected lexical semantic validator; enforce the approved machine-checkable response boundary; and present objective/instruction/guidance with generated output for human judgment.
+5. **Lifecycle/integration verification and acceptance.** Exercise the actual Streamlit rerun/session boundary and repeat manual acceptance with a recorded qualified local model configuration before declaring V0.5 complete.
 
 ### Required automated Streamlit lifecycle/integration coverage
 

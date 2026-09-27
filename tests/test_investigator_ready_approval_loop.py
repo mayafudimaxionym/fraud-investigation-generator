@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,8 +26,14 @@ from investigation.proposal_agent import (
     CandidateDirectionContent,
     ProposalAgentResult,
     ProposalGenerationRequest,
+    LocalProposalAgent,
     ProposalModelError,
     ProposalModelFailureCategory,
+)
+from investigation.read_model import (
+    AttentionReason,
+    InvestigationReadProjector,
+    PersistedLifecycleState,
 )
 
 
@@ -72,6 +79,46 @@ class FakeDirectionAgent:
             self.direction,
         )
 
+
+class ContractProposalClient:
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.prompts: list[str] = []
+
+    def preflight(self) -> None:
+        return None
+
+    def generate(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self.response
+
+
+def _contract_response(*, one_step: bool = False) -> str:
+    plan_steps = (
+        ["Review the same records as the proposed action."]
+        if one_step
+        else [
+            "Identify the investigable questions and governed evidence boundary.",
+            "Compare event timing and visible relationships across explanations.",
+            "Check gaps and alternative interpretations before synthesis.",
+        ]
+    )
+    return json.dumps(
+        {
+            "competing_explanations": [
+                "The activity may be coordinated misuse.",
+                "The activity may be legitimate shared access.",
+            ],
+            "plan_steps": plan_steps,
+            "proposal": {
+                "action": "Review visible event timing for the reported activity.",
+                "purpose": "Distinguish the plausible explanations.",
+                "why_now": "The governed context supports this bounded next step.",
+                "data_to_be_used": "visible_events.csv and visible_relationships.csv",
+                "expected_output": "A bounded investigator-readable comparison.",
+            },
+        }
+    )
 
 def _catalog(package: Path) -> ConfiguredCaseCatalog:
     return ConfiguredCaseCatalog(
@@ -238,6 +285,95 @@ def test_initial_context_failure_creates_nothing_and_model_failure_is_durable(
     store.close()
 
 
+def test_one_step_initial_response_fails_without_authoritative_generated_state(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteInvestigationStore(tmp_path / "invalid-initial.sqlite")
+    package = export_development_investigation_package(tmp_path / "package")
+    catalog = _catalog(package)
+    client = ContractProposalClient(_contract_response(one_step=True))
+    service = InvestigatorReadyApprovalLoopService(
+        store, catalog, LocalProposalAgent(client), client
+    )
+    operation = service.prepare_start_investigation("case-42", "Investigate.")
+
+    with pytest.raises(InvestigatorReadyServiceError) as error:
+        service.claim_and_execute_operation(operation.operation_id, "runner-invalid")
+
+    assert error.value.category is ProposalModelFailureCategory.GENERATION_ERROR
+    assert store.get_agent_operation(operation.operation_id).status == "FAILED"
+    assert store.list_directions(operation.investigation_id) == ()
+    assert store.list_proposals(operation.investigation_id) == ()
+    detail = InvestigationReadProjector(store, catalog).detail(
+        operation.investigation_id
+    )
+    assert detail.lifecycle_state is PersistedLifecycleState.ATTENTION
+    assert detail.attention_reason is AttentionReason.OPERATION_FAILED
+    store.close()
+
+
+@pytest.mark.parametrize("decision_type", ("MODIFY", "DECLINE"))
+def test_structurally_valid_unchanged_decision_response_proceeds_to_review(
+    tmp_path: Path, decision_type: str
+) -> None:
+    store = SQLiteInvestigationStore(
+        tmp_path / f"invalid-{decision_type.casefold()}.sqlite"
+    )
+    package = export_development_investigation_package(
+        tmp_path / f"package-{decision_type.casefold()}"
+    )
+    catalog = _catalog(package)
+    client = ContractProposalClient(_contract_response())
+    service = InvestigatorReadyApprovalLoopService(
+        store, catalog, LocalProposalAgent(client), client
+    )
+    started = service.start_investigation("case-42", "Investigate.")
+    original = _initial_proposal(started)
+    if decision_type == "MODIFY":
+        investigator_text = "Analyze all the relevant datasets."
+        operation = service.prepare_modify(
+            started.investigation.investigation_id,
+            original.proposal_id,
+            investigator_text,
+        )
+    else:
+        investigator_text = (
+            "Provide a general analytical plan to find a potential fraud ring."
+        )
+        operation = service.prepare_decline(
+            started.investigation.investigation_id,
+            original.proposal_id,
+            investigator_text,
+        )
+
+    service.claim_and_execute_operation(
+        operation.operation_id, f"runner-{decision_type.casefold()}"
+    )
+
+    assert investigator_text in client.prompts[-1]
+    assert len(client.prompts) == 2
+    assert store.get_agent_operation(operation.operation_id).status == "COMPLETED"
+    proposals = store.list_proposals(started.investigation.investigation_id)
+    assert len(proposals) == 2
+    assert any(proposal.status == "PROPOSED" for proposal in proposals)
+    assert any(
+        proposal.status == ("MODIFIED" if decision_type == "MODIFY" else "DECLINED")
+        for proposal in proposals
+    )
+    assert len(store.list_directions(started.investigation.investigation_id)) == 1
+    assert len(store.list_decisions(started.investigation.investigation_id)) == 1
+    results = store.list_decline_reconsideration_results(
+        started.investigation.investigation_id
+    )
+    assert len(results) == (0 if decision_type == "MODIFY" else 1)
+    detail = InvestigationReadProjector(store, catalog).detail(
+        started.investigation.investigation_id
+    )
+    assert detail.lifecycle_state is PersistedLifecycleState.NEEDS_REVIEW
+    assert detail.attention_reason is None
+    store.close()
+
+
 def test_initial_persistence_failure_leaves_no_partial_investigation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -259,6 +395,17 @@ def test_modify_uses_revision_lineage_and_creates_direction_only_when_changed(tm
     store, service, agent, _ = _service(tmp_path)
     original_state = _start(service)
     original = _initial_proposal(original_state)
+    assert original_state.current_direction is not None
+    agent.direction = CandidateDirectionContent(
+        tuple(
+            f"  {value.upper()}  "
+            for value in original_state.current_direction.competing_explanations
+        ),
+        tuple(
+            "   ".join(value.upper().split())
+            for value in original_state.current_direction.plan_steps
+        ),
+    )
 
     unchanged = service.modify(original_state.investigation.investigation_id, original.proposal_id, "Focus on event timing.")
     assert len(unchanged.directions) == 1

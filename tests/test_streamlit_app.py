@@ -7,6 +7,8 @@ from streamlit.testing.v1 import AppTest
 
 from investigation.app import (
     DEFAULT_OBJECTIVE,
+    INVALID_LOCAL_MODEL_CONFIGURATION_MESSAGE,
+    _UnavailableProposalClient,
     _build_dependencies,
     _render_attention,
     _render_back,
@@ -20,6 +22,7 @@ from investigation.app import (
     select_active_proposal,
 )
 from investigation.models import AnalyticalActionProposal
+from investigation.proposal_agent import ProposalModelError
 from investigation.read_model import AttentionReason, InvestigatorOperation
 
 
@@ -119,6 +122,56 @@ def test_dependency_factory_creates_a_fresh_store_for_each_ui_execution(
     finally:
         first_store.close()
         second_store.close()
+
+
+def test_invalid_numeric_model_configuration_uses_fixed_safe_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_value = "not-a-number-sensitive-deployment-value"
+    monkeypatch.setattr(
+        "investigation.app.DATABASE_PATH", tmp_path / "investigations.sqlite"
+    )
+    monkeypatch.setenv("OLLAMA_MODEL", "configured-model")
+    monkeypatch.setenv("OLLAMA_TIMEOUT_SECONDS", raw_value)
+
+    store, _, _, service, configuration_error = _build_dependencies()
+    try:
+        assert service is not None
+        assert configuration_error == INVALID_LOCAL_MODEL_CONFIGURATION_MESSAGE
+        assert raw_value not in configuration_error
+        assert "could not convert string to float" not in configuration_error
+    finally:
+        store.close()
+
+    client = _UnavailableProposalClient()
+    with pytest.raises(ProposalModelError) as unavailable:
+        client.preflight()
+    assert str(unavailable.value) == INVALID_LOCAL_MODEL_CONFIGURATION_MESSAGE
+    assert raw_value not in str(unavailable.value)
+
+
+def test_invalid_numeric_model_configuration_does_not_leak_into_streamlit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_value = "not-a-number-investigator-secret"
+    monkeypatch.setenv(
+        "INVESTIGATION_DATABASE_PATH", str(tmp_path / "investigations.sqlite")
+    )
+    monkeypatch.setenv("OLLAMA_MODEL", "configured-model")
+    monkeypatch.setenv("OLLAMA_TIMEOUT_SECONDS", raw_value)
+    app = AppTest.from_file(Path(__file__).parents[1] / "investigation" / "app.py")
+
+    app.run()
+
+    rendered = "\n".join(
+        str(item.value)
+        for collection in (app.markdown, app.error, app.info, app.warning)
+        for item in collection
+    )
+    assert not app.exception
+    assert INVALID_LOCAL_MODEL_CONFIGURATION_MESSAGE in rendered
+    assert raw_value not in rendered
+    assert "could not convert string to float" not in rendered
 
 
 def test_initial_streamlit_screen_renders_without_invoking_ollama(
@@ -285,19 +338,19 @@ def test_operation_attention_is_actionable_and_retry_is_prepared(
     (
         (
             "START",
-            "No proposal was created. No action was authorized.",
+            "No new proposal was saved. No action was authorized.",
         ),
         (
             "MODIFY",
-            "The original proposal remains MODIFIED. No completed revision was created and no action was authorized.",
+            "The original proposal remains MODIFIED. No new revision proposal was saved and no action was authorized.",
         ),
         (
             "DECLINE_REDIRECT",
-            "The original proposal remains DECLINED. No replacement proposal was created and no action was authorized.",
+            "The original proposal remains DECLINED. No new replacement proposal was saved and no action was authorized.",
         ),
         (
             "DECLINE_RECONSIDER",
-            "The original proposal remains DECLINED. No replacement proposal was created and no action was authorized.",
+            "The original proposal remains DECLINED. No new replacement proposal was saved and no action was authorized.",
         ),
     ),
 )
@@ -353,6 +406,9 @@ def test_every_persisted_failure_category_has_safe_investigator_copy() -> None:
         operation_failure_message(category)
         != "The investigation request could not be completed."
         for category in categories
+    )
+    assert operation_failure_message("GENERATION_ERROR") == (
+        "The agent response did not satisfy the required response contract."
     )
 
 

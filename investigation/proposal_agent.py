@@ -328,11 +328,23 @@ def build_proposal_prompt(request: ProposalGenerationRequest) -> str:
         '"data_to_be_used": "...", "expected_output": "..."}}\n\n'
         "Maintain plausible competing explanations where warranted. Customer/support statements "
         "and prior analyst notes are evidence inputs or possible explanations, not established "
-        "facts or findings. Prefer the one next action that can discriminate among plausible "
-        "explanations. The proposal must be investigator-readable and must not describe Python, "
+        "facts or findings. Return at least two competing explanations and at least two ordered "
+        "provisional-plan steps. Provide a genuine broader investigation direction rather than "
+        "restating the proposed next action. Where relevant, decompose the objective into "
+        "investigable questions, identify governed evidence, examine behavioral and relational "
+        "patterns, maintain competing explanations, check corroboration, contradiction, and "
+        "limitations, follow a sensible sequence, and lead toward synthesis. Do not use a fixed "
+        "stage taxonomy merely to satisfy the format. Prefer the one narrow next action that "
+        "begins or advances that broader plan and can discriminate among plausible explanations. "
+        "The proposal must be investigator-readable and must not describe Python, "
         "SQL, internal tools, filesystem operations, execution details, or analytical results that "
         "have not been produced. The action is neither authorized nor executed. Use only the "
-        "supplied context and inventory; do not refer to sources that were not supplied.\n\n"
+        "supplied context and inventory; do not refer to sources that were not supplied. For "
+        "Modify, revise the proposal and direction where applicable in response to the exact "
+        "persisted investigator instruction; the basic action may remain while its scope, purpose, "
+        "data, limitations, or expected output changes. For guided Decline reconsideration, "
+        "reconsider the broader direction and next action in response to the exact persisted "
+        "guidance. Do not claim analytical results that have not been produced.\n\n"
         f"Generation mode: {request.mode}\n"
         f"Effective investigation objective (may be intentionally blank):\n{request.objective}\n\n"
         f"Investigation request:\n{request.context.investigation_request}\n\n"
@@ -366,9 +378,11 @@ def parse_proposal_model_response(response_text: str) -> ProposalModelResponse:
         raise ValueError("proposal response proposal fields must all be strings")
     for field in _PROPOSAL_FIELDS:
         _require_non_blank(proposal[field], field)
-    return ProposalModelResponse(
+    response = ProposalModelResponse(
         direction=direction, **{field: proposal[field] for field in _PROPOSAL_FIELDS}
     )
+    _require_direction_contract(response)
+    return response
 
 
 def _parse_text_list(value: object, field_name: str) -> tuple[str, ...]:
@@ -377,6 +391,30 @@ def _parse_text_list(value: object, field_name: str) -> tuple[str, ...]:
     for item in value:
         _require_non_blank(item, field_name)
     return tuple(value)
+
+
+def _require_direction_contract(response: ProposalModelResponse) -> None:
+    explanations = response.direction.competing_explanations
+    if len(explanations) < 2:
+        raise ValueError("response requires at least two competing explanations")
+    _require_no_exact_duplicates(explanations, "competing explanations")
+
+    steps = response.direction.plan_steps
+    if len(steps) < 2:
+        raise ValueError("response requires at least two provisional plan steps")
+    _require_no_exact_duplicates(steps, "provisional plan steps")
+
+
+def _require_no_exact_duplicates(
+    values: tuple[str, ...], field_name: str
+) -> None:
+    normalized = tuple(_normalize_trivial_text(value) for value in values)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"{field_name} must not contain exact duplicates")
+
+
+def _normalize_trivial_text(value: str) -> str:
+    return " ".join(value.split()).casefold()
 
 
 def _direction_prompt_context(request: ProposalGenerationRequest) -> str:

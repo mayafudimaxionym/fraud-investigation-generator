@@ -11,7 +11,12 @@ import streamlit as _streamlit
 
 from investigation.approval_loop import InvestigatorReadyApprovalLoopService, InvestigatorReadyServiceError
 from investigation.case_catalog import DEFAULT_LOCAL_CASE_CATALOG, ConfiguredCaseCatalog
-from investigation.models import AgentOperation, AnalyticalActionProposal
+from investigation.models import (
+    AgentOperation,
+    AnalyticalActionProposal,
+    HumanDecision,
+    InvestigationDirection,
+)
 from investigation.persistence import SQLiteInvestigationStore
 from investigation.proposal_agent import (
     LocalProposalAgent,
@@ -24,6 +29,14 @@ from investigation.read_model import AttentionReason, InvestigationDetail, Inves
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _DATABASE_PATH_ENVIRONMENT_VARIABLE = "INVESTIGATION_DATABASE_PATH"
+INVALID_LOCAL_MODEL_CONFIGURATION_MESSAGE = (
+    "The local model configuration is invalid. Ask the application administrator "
+    "to verify the deployment settings."
+)
+INVALID_DEPLOYMENT_CONFIGURATION_MESSAGE = (
+    "The application configuration is invalid. Ask the application administrator "
+    "to verify the deployment settings."
+)
 DEFAULT_OBJECTIVE = "Investigate the reported suspicious activity, identify relevant patterns and relationships, and assess the plausible explanations without assuming any explanation is established in advance."
 
 _RENDER_ACKNOWLEDGEMENT = _streamlit.components.v2.component(
@@ -59,18 +72,21 @@ def configured_database_path(
     return path.resolve()
 
 
-DATABASE_PATH = configured_database_path()
+try:
+    DATABASE_PATH = configured_database_path()
+    _DATABASE_CONFIGURATION_ERROR: str | None = None
+except (OSError, ValueError):
+    DATABASE_PATH = _REPOSITORY_ROOT / "investigations.sqlite"
+    _DATABASE_CONFIGURATION_ERROR = INVALID_DEPLOYMENT_CONFIGURATION_MESSAGE
 
 
 class _UnavailableProposalClient:
     """Preserve durable failure handling when deployment configuration is invalid."""
 
-    def __init__(self, message: str) -> None:
-        self._message = message
-
     def preflight(self) -> None:
         raise ProposalModelError(
-            ProposalModelFailureCategory.MODEL_UNAVAILABLE, self._message
+            ProposalModelFailureCategory.MODEL_UNAVAILABLE,
+            INVALID_LOCAL_MODEL_CONFIGURATION_MESSAGE,
         )
 
     def generate(self, _: str) -> str:
@@ -96,8 +112,8 @@ def _build_dependencies() -> tuple[SQLiteInvestigationStore, ConfiguredCaseCatal
     projector = InvestigationReadProjector(store, catalog)
     try:
         client = OllamaProposalClient(ProposalOllamaConfig.from_environment())
-    except ValueError as error:
-        client = _UnavailableProposalClient(str(error))
+    except ValueError:
+        client = _UnavailableProposalClient()
         return (
             store,
             catalog,
@@ -105,7 +121,7 @@ def _build_dependencies() -> tuple[SQLiteInvestigationStore, ConfiguredCaseCatal
             InvestigatorReadyApprovalLoopService(
                 store, catalog, LocalProposalAgent(client), client
             ),
-            str(error),
+            INVALID_LOCAL_MODEL_CONFIGURATION_MESSAGE,
         )
     return store, catalog, projector, InvestigatorReadyApprovalLoopService(store, catalog, LocalProposalAgent(client), client), None
 
@@ -150,7 +166,9 @@ def operation_failure_message(category: str | None) -> str:
         "SERVICE_UNAVAILABLE": "The local model service is unavailable.",
         "MODEL_UNAVAILABLE": "The configured local model is unavailable.",
         "REQUEST_TIMEOUT": "The local model request timed out.",
-        "GENERATION_ERROR": "The agent could not produce a valid investigation proposal.",
+        "GENERATION_ERROR": (
+            "The agent response did not satisfy the required response contract."
+        ),
         "PERSISTENCE_ERROR": "The generated investigation state could not be saved safely.",
         "SAFE_CONTEXT_UNAVAILABLE": "The configured case context is unavailable.",
         "PACKAGE_ASSOCIATION_UNAVAILABLE": "The investigation case association is unavailable.",
@@ -163,18 +181,18 @@ def operation_failure_message(category: str | None) -> str:
 def operation_recovery_message(operation_type: str) -> str:
     """Describe only the authoritative state left by an incomplete operation."""
     return {
-        "START": "No proposal was created. No action was authorized.",
+        "START": "No new proposal was saved. No action was authorized.",
         "MODIFY": (
-            "The original proposal remains MODIFIED. No completed revision was "
-            "created and no action was authorized."
+            "The original proposal remains MODIFIED. No new revision proposal was "
+            "saved and no action was authorized."
         ),
         "DECLINE_REDIRECT": (
-            "The original proposal remains DECLINED. No replacement proposal was "
-            "created and no action was authorized."
+            "The original proposal remains DECLINED. No new replacement proposal was "
+            "saved and no action was authorized."
         ),
         "DECLINE_RECONSIDER": (
-            "The original proposal remains DECLINED. No replacement proposal was "
-            "created and no action was authorized."
+            "The original proposal remains DECLINED. No new replacement proposal was "
+            "saved and no action was authorized."
         ),
     }[operation_type]
 
@@ -273,6 +291,103 @@ def _render_history(st: object, detail: InvestigationDetail) -> None:
             st.write(f"Decline reconsideration completed · {result.created_at.isoformat()} · independent replacement proposed")
 
 
+def _decision_for_active_review(
+    detail: InvestigationDetail,
+) -> HumanDecision | None:
+    proposal = detail.active_proposal
+    if proposal is None:
+        return None
+    if proposal.revised_from_proposal_id is not None:
+        return next(
+            (
+                decision
+                for decision in detail.decision_history
+                if decision.decision_type == "MODIFY"
+                and decision.proposal_id == proposal.revised_from_proposal_id
+            ),
+            None,
+        )
+    result = next(
+        (
+            item
+            for item in detail.decline_reconsideration_results
+            if item.replacement_proposal_id == proposal.proposal_id
+        ),
+        None,
+    )
+    if result is None:
+        return None
+    return next(
+        (
+            decision
+            for decision in detail.decision_history
+            if decision.decision_id == result.decline_decision_id
+        ),
+        None,
+    )
+
+
+def _previous_direction_for_review(
+    detail: InvestigationDetail, decision: HumanDecision | None
+) -> InvestigationDirection | None:
+    current = detail.current_direction
+    if (
+        decision is None
+        or current is None
+        or current.version <= 1
+        or current.trigger_reference_id != decision.decision_id
+    ):
+        return None
+    return next(
+        (
+            direction
+            for direction in detail.direction_history
+            if direction.version == current.version - 1
+        ),
+        None,
+    )
+
+
+def _render_direction(
+    st: object, direction: InvestigationDirection, heading: str
+) -> None:
+    st.subheader(heading)
+    st.markdown("**Working explanations — none is currently established as a finding.**")
+    for item in direction.competing_explanations:
+        st.write(f"- {item}")
+    st.markdown("**Provisional plan**")
+    for item in direction.plan_steps:
+        st.write(f"- {item}")
+
+
+def _render_semantic_review_context(st: object, detail: InvestigationDetail) -> None:
+    st.subheader("Human semantic review")
+    objective = (
+        detail.investigation.objective
+        if detail.investigation.objective is not None
+        else "Not recorded"
+    )
+    st.write(f"**Effective objective:** {objective}")
+    decision = _decision_for_active_review(detail)
+    if decision is not None:
+        label = (
+            "Persisted Modify instruction"
+            if decision.decision_type == "MODIFY"
+            else "Persisted Decline guidance"
+        )
+        value = decision.instruction_or_reason or "No additional guidance was provided."
+        st.write(f"**{label}:** {value}")
+    st.info(
+        "This AI-generated direction and proposal are provisional. Verify that they "
+        "follow the objective and any saved instruction, are appropriately scoped, "
+        "and use the permitted evidence before approval. No action is authorized "
+        "until you approve it."
+    )
+    previous = _previous_direction_for_review(detail, decision)
+    if previous is not None:
+        _render_direction(st, previous, "Previous direction for comparison")
+
+
 def _render_attention(st: object, store: SQLiteInvestigationStore, catalog: ConfiguredCaseCatalog, detail: InvestigationDetail, service: InvestigatorReadyApprovalLoopService | None) -> None:
     reason = detail.attention_reason
     if reason in (AttentionReason.OPERATION_FAILED, AttentionReason.OPERATION_INTERRUPTED):
@@ -366,14 +481,10 @@ def _render_detail(st: object, store: SQLiteInvestigationStore, catalog: Configu
         _render_working(st, detail, service, runner_instance_id)
         _render_history(st, detail)
         return
+    if detail.lifecycle_state is PersistedLifecycleState.NEEDS_REVIEW:
+        _render_semantic_review_context(st, detail)
     if detail.current_direction:
-        st.subheader("Current direction")
-        st.markdown("**Working explanations — none is currently established as a finding.**")
-        for item in detail.current_direction.competing_explanations:
-            st.write(f"- {item}")
-        st.markdown("**Provisional plan**")
-        for item in detail.current_direction.plan_steps:
-            st.write(f"- {item}")
+        _render_direction(st, detail.current_direction, "Generated direction")
     if detail.lifecycle_state is PersistedLifecycleState.NEEDS_REVIEW and detail.active_proposal:
         _render_proposal(st, detail.active_proposal)
         if st.button("Approve", disabled=service is None):
@@ -417,6 +528,9 @@ def main() -> None:
     import streamlit as st
     st.set_page_config(page_title="Fraud Investigation", layout="wide")
     _initialize(st)
+    if _DATABASE_CONFIGURATION_ERROR is not None:
+        st.error(_DATABASE_CONFIGURATION_ERROR)
+        return
     store, catalog, projector, service, configuration_error = _build_dependencies()
     try:
         runner_instance_id = process_runner_instance_id()

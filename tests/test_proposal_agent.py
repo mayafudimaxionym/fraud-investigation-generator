@@ -85,7 +85,11 @@ def _direction() -> InvestigationDirection:
     return InvestigationDirection(
         "direction-001", "investigation-001", 1,
         ("The activity may be coordinated.", "The activity may be legitimate shared use."),
-        ("Review visible events.", "Compare relationship evidence."),
+        (
+            "Identify the investigable questions and available governed sources.",
+            "Compare visible event and relationship evidence across explanations.",
+            "Check contradictions and limitations before synthesis.",
+        ),
         BASE_TIME, "INITIAL",
     )
 
@@ -122,8 +126,9 @@ def _payload(**overrides: object) -> str:
             "The activity may be legitimate shared access.",
         ],
         "plan_steps": [
-            "Review available event timing.",
-            "Compare visible relationship evidence.",
+            "Identify the investigable questions and governed evidence boundary.",
+            "Compare event timing and visible relationships across explanations.",
+            "Check data gaps and alternative interpretations before synthesis.",
         ],
         "proposal": {
             "action": "Review visible_events.csv for relevant login and transfer sequences.",
@@ -158,9 +163,13 @@ def test_valid_initial_response_preserves_order_and_returns_one_unchanged_propos
 
     assert result.direction == CandidateDirectionContent(
         ("The activity may be coordinated misuse.", "The activity may be legitimate shared access."),
-        ("Review available event timing.", "Compare visible relationship evidence."),
+        (
+            "Identify the investigable questions and governed evidence boundary.",
+            "Compare event timing and visible relationships across explanations.",
+            "Check data gaps and alternative interpretations before synthesis.",
+        ),
     )
-    assert result.provisional_plan == "Review available event timing.\nCompare visible relationship evidence."
+    assert result.provisional_plan == "\n".join(json.loads(_payload())["plan_steps"])
     assert result.proposal.proposal_id == "proposal-002"
     assert result.proposal.created_at == BASE_TIME
     assert result.proposal.status == "PROPOSED"
@@ -174,8 +183,10 @@ def test_valid_initial_response_preserves_order_and_returns_one_unchanged_propos
     "payload",
     (
         _payload(competing_explanations=["  "]),
+        _payload(competing_explanations=["Only one explanation."]),
         _payload(competing_explanations="not a list"),
         _payload(plan_steps=["  "]),
+        _payload(plan_steps=["Only one plan step."]),
         _payload(proposal={"action": ["not", "a", "string"], "purpose": "p", "why_now": "w", "data_to_be_used": "d", "expected_output": "e"}),
         _payload(proposal={"action": "", "purpose": "p", "why_now": "w", "data_to_be_used": "d", "expected_output": "e"}),
         "not JSON",
@@ -196,6 +207,114 @@ def test_invalid_model_response_becomes_a_generation_error_before_proposal_retur
     with pytest.raises(ProposalModelError) as error:
         agent.generate(_request())
     assert error.value.category is ProposalModelFailureCategory.GENERATION_ERROR
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        _payload(competing_explanations=["Shared access", "  shared   ACCESS  "]),
+        _payload(plan_steps=["Review visible events", "  review   VISIBLE events  "]),
+    ),
+)
+def test_exact_direction_duplicates_after_case_and_whitespace_normalization_are_rejected(
+    payload: str,
+) -> None:
+    with pytest.raises(ValueError):
+        parse_proposal_model_response(payload)
+
+
+@pytest.mark.parametrize("step_count", (2, 3, 6))
+def test_reasonable_plan_lengths_without_fixed_stage_names_are_accepted(
+    step_count: int,
+) -> None:
+    steps = [f"Investigation activity {index}." for index in range(step_count)]
+    response = parse_proposal_model_response(_payload(plan_steps=steps))
+    assert response.direction.plan_steps == tuple(steps)
+
+
+def test_semantically_similar_but_not_exact_entries_are_left_for_human_review() -> None:
+    response = parse_proposal_model_response(
+        _payload(
+            competing_explanations=["Shared access", "Shared access."],
+            plan_steps=["Review visible events", "Review the visible events"],
+        )
+    )
+    assert len(response.direction.competing_explanations) == 2
+    assert len(response.direction.plan_steps) == 2
+
+
+@pytest.mark.parametrize(
+    ("mode", "guidance"),
+    (
+        ("MODIFY", None),
+        ("DECLINE_REDIRECT", "Do not review relationships; focus on events."),
+    ),
+)
+def test_structurally_valid_weak_or_unchanged_response_proceeds_to_human_review(
+    mode: str, guidance: str | None
+) -> None:
+    prior = _direction()
+    unchanged = json.loads(_payload())
+    unchanged["competing_explanations"] = list(prior.competing_explanations)
+    unchanged["plan_steps"] = list(prior.plan_steps)
+    unchanged["proposal"] = {
+        "action": "Review visible events.",
+        "purpose": "Assess the activity.",
+        "why_now": "The available evidence requires review.",
+        "data_to_be_used": "visible_events.csv",
+        "expected_output": "A bounded investigator-readable summary.",
+    }
+    agent, client = _agent(json.dumps(unchanged))
+    result = agent.generate(_request(mode=mode, guidance=guidance))
+
+    assert result.proposal.status == "PROPOSED"
+    assert result.proposal.action == "Review visible events."
+    assert len(client.prompts) == 1
+
+
+@pytest.mark.parametrize(
+    "changed_field",
+    ("purpose", "why_now", "data_to_be_used", "expected_output"),
+)
+def test_modify_accepts_same_action_with_change_confined_to_another_proposal_field(
+    changed_field: str,
+) -> None:
+    payload = json.loads(_payload())
+    payload["proposal"]["action"] = _proposal().action
+    payload["proposal"][changed_field] = f"Changed {changed_field} content."
+    agent, client = _agent(json.dumps(payload))
+
+    result = agent.generate(_request(mode="MODIFY"))
+
+    assert result.proposal.action == _proposal().action
+    assert getattr(result.proposal, changed_field) == f"Changed {changed_field} content."
+    assert len(client.prompts) == 1
+
+
+@pytest.mark.parametrize(
+    "purpose",
+    (
+        "Do the opposite of the saved instruction.",
+        "Do not follow the requested scope.",
+        "Mention events incidentally while keeping the prior approach.",
+    ),
+)
+def test_semantically_adversarial_but_structurally_valid_content_is_not_auto_rejected(
+    purpose: str,
+) -> None:
+    payload = json.loads(_payload())
+    payload["proposal"]["purpose"] = purpose
+    agent, client = _agent(json.dumps(payload))
+
+    result = agent.generate(
+        _request(
+            mode="DECLINE_REDIRECT",
+            guidance="Do not review relationships; focus on events.",
+        )
+    )
+
+    assert result.proposal.purpose == purpose
+    assert len(client.prompts) == 1
 
 
 @pytest.mark.parametrize(
@@ -227,9 +346,7 @@ def test_legacy_propose_wrapper_remains_a_thin_initial_generation_adapter() -> N
     )
 
     assert result.proposal.proposal_id == "proposal-legacy"
-    assert result.direction.plan_steps == (
-        "Review available event timing.", "Compare visible relationship evidence."
-    )
+    assert result.direction.plan_steps == tuple(json.loads(_payload())["plan_steps"])
 
 
 def test_legacy_propose_wrapper_delegates_to_the_structured_generation_path(
@@ -270,9 +387,20 @@ def test_prompt_requires_analytical_discipline_and_uses_governed_context_only() 
         "plausible competing explanations",
         "discriminate among plausible explanations",
         "not established facts or findings",
+        "at least two ordered provisional-plan steps",
+        "decompose the objective into investigable questions",
+        "check corroboration, contradiction, and limitations",
+        "Do not use a fixed stage taxonomy",
         "neither authorized nor executed",
     ):
         assert text in prompt
+    for unapproved_requirement in (
+        "exactly five",
+        "Scope:",
+        "Evidence review:",
+        "reuse its important scope/content terms",
+    ):
+        assert unapproved_requirement not in prompt
     for dataset in context.datasets:
         assert dataset.dataset_name in prompt
         assert str(dataset.row_count) in prompt

@@ -689,9 +689,12 @@ class InvestigatorReadyApprovalLoopService:
         provenance: str,
         trigger_reference_id: str,
     ) -> InvestigationDirection | None:
-        if (
-            generated.direction.competing_explanations == current.competing_explanations
-            and generated.direction.plan_steps == current.plan_steps
+        if _normalized_direction_content(
+            generated.direction.competing_explanations,
+            generated.direction.plan_steps,
+        ) == _normalized_direction_content(
+            current.competing_explanations,
+            current.plan_steps,
         ):
             return None
         return self._direction_from_result(
@@ -765,6 +768,18 @@ def _build_revision_instruction(
         f"Original data to be used: {original.data_to_be_used}\n"
         f"Original expected output: {original.expected_output}\n\n"
         f"Human modification instruction: {modification_instruction}"
+    )
+
+
+def _normalized_direction_content(
+    competing_explanations: tuple[str, ...], plan_steps: tuple[str, ...]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    def normalize(value: str) -> str:
+        return " ".join(value.split()).casefold()
+
+    return (
+        tuple(normalize(value) for value in competing_explanations),
+        tuple(normalize(value) for value in plan_steps),
     )
 
 
