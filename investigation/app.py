@@ -2,18 +2,80 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Mapping, Sequence
+from uuid import uuid4
+
+import streamlit as _streamlit
 
 from investigation.approval_loop import InvestigatorReadyApprovalLoopService, InvestigatorReadyServiceError
 from investigation.case_catalog import DEFAULT_LOCAL_CASE_CATALOG, ConfiguredCaseCatalog
-from investigation.models import AnalyticalActionProposal
+from investigation.models import AgentOperation, AnalyticalActionProposal
 from investigation.persistence import SQLiteInvestigationStore
-from investigation.proposal_agent import LocalProposalAgent, OllamaProposalClient, ProposalOllamaConfig
+from investigation.proposal_agent import (
+    LocalProposalAgent,
+    OllamaProposalClient,
+    ProposalModelError,
+    ProposalModelFailureCategory,
+    ProposalOllamaConfig,
+)
 from investigation.read_model import AttentionReason, InvestigationDetail, InvestigationReadProjector, PersistedLifecycleState
 
-DATABASE_PATH = Path("investigations.sqlite")
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+_DATABASE_PATH_ENVIRONMENT_VARIABLE = "INVESTIGATION_DATABASE_PATH"
 DEFAULT_OBJECTIVE = "Investigate the reported suspicious activity, identify relevant patterns and relationships, and assess the plausible explanations without assuming any explanation is established in advance."
+
+_RENDER_ACKNOWLEDGEMENT = _streamlit.components.v2.component(
+    "agent_operation_render_acknowledgement",
+    js="""
+    export default function(component) {
+        const { data, setTriggerValue } = component;
+        let cancelled = false;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (!cancelled) {
+                setTriggerValue("acknowledged_operation_id", data.operationId);
+            }
+        }));
+        return () => { cancelled = true; };
+    }
+    """,
+)
+
+
+def configured_database_path(
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    """Return an absolute deployment path with a repository-root default."""
+    values = os.environ if environment is None else environment
+    configured = values.get(_DATABASE_PATH_ENVIRONMENT_VARIABLE)
+    if configured is None or not configured.strip():
+        return _REPOSITORY_ROOT / "investigations.sqlite"
+    path = Path(configured).expanduser()
+    if not path.is_absolute():
+        raise ValueError(
+            f"{_DATABASE_PATH_ENVIRONMENT_VARIABLE} must be an absolute path"
+        )
+    return path.resolve()
+
+
+DATABASE_PATH = configured_database_path()
+
+
+class _UnavailableProposalClient:
+    """Preserve durable failure handling when deployment configuration is invalid."""
+
+    def __init__(self, message: str) -> None:
+        self._message = message
+
+    def preflight(self) -> None:
+        raise ProposalModelError(
+            ProposalModelFailureCategory.MODEL_UNAVAILABLE, self._message
+        )
+
+    def generate(self, _: str) -> str:
+        self.preflight()
+        raise AssertionError("unreachable")
 
 
 def select_active_proposal(proposals: Sequence[AnalyticalActionProposal]) -> AnalyticalActionProposal | None:
@@ -35,7 +97,16 @@ def _build_dependencies() -> tuple[SQLiteInvestigationStore, ConfiguredCaseCatal
     try:
         client = OllamaProposalClient(ProposalOllamaConfig.from_environment())
     except ValueError as error:
-        return store, catalog, projector, None, str(error)
+        client = _UnavailableProposalClient(str(error))
+        return (
+            store,
+            catalog,
+            projector,
+            InvestigatorReadyApprovalLoopService(
+                store, catalog, LocalProposalAgent(client), client
+            ),
+            str(error),
+        )
     return store, catalog, projector, InvestigatorReadyApprovalLoopService(store, catalog, LocalProposalAgent(client), client), None
 
 
@@ -60,61 +131,80 @@ def _render_proposal(st: object, proposal: AnalyticalActionProposal, heading: st
 
 def _failure_message(error: Exception) -> str:
     category = getattr(error, "category", None)
+    return operation_failure_message(str(getattr(category, "value", category)))
+
+
+def operation_working_label(operation: str) -> str:
+    """Return the only transient investigator-facing label for an explicit request."""
+    return {
+        "START": "Preparing investigation approach",
+        "MODIFY": "Revising proposed action",
+        "DECLINE_REDIRECT": "Adjusting investigation plan",
+        "DECLINE_RECONSIDER": "Adjusting investigation plan",
+    }[operation]
+
+
+def operation_failure_message(category: str | None) -> str:
+    """Translate one persisted safe failure category into investigator language."""
     return {
         "SERVICE_UNAVAILABLE": "The local model service is unavailable.",
         "MODEL_UNAVAILABLE": "The configured local model is unavailable.",
         "REQUEST_TIMEOUT": "The local model request timed out.",
         "GENERATION_ERROR": "The agent could not produce a valid investigation proposal.",
-    }.get(str(getattr(category, "value", category)), "The investigation request could not be completed.")
+        "PERSISTENCE_ERROR": "The generated investigation state could not be saved safely.",
+        "SAFE_CONTEXT_UNAVAILABLE": "The configured case context is unavailable.",
+        "PACKAGE_ASSOCIATION_UNAVAILABLE": "The investigation case association is unavailable.",
+        "OBJECTIVE_UNAVAILABLE": "The persisted investigation objective is unavailable.",
+        "DIRECTION_UNAVAILABLE": "The current investigation direction is unavailable.",
+        "UNKNOWN_FAILURE": "The agent request ended with an unknown safe failure category.",
+    }.get(category, "The investigation request could not be completed.")
 
 
-def operation_working_label(operation: str) -> str:
-    """Return the only transient investigator-facing label for an explicit request."""
-    return "Preparing investigation approach" if operation == "start" else "Adjusting investigation plan"
+@_streamlit.cache_resource(show_spinner=False)
+def process_runner_instance_id() -> str:
+    """Return one stable identity for the lifetime of this Streamlit process."""
+    return f"runner-{uuid4()}"
 
 
 def _initialize(st: object) -> None:
-    for key, value in {"v05_view": "list", "v05_active_id": None, "v05_pending": None, "v05_error": None, "v05_new_objective": DEFAULT_OBJECTIVE}.items():
+    for key, value in {"v05_view": "list", "v05_active_id": None, "v05_error": None, "v05_new_objective": DEFAULT_OBJECTIVE}.items():
         st.session_state.setdefault(key, value)
 
 
-def _queue(st: object, operation: str, **payload: str) -> None:
-    st.session_state.v05_pending = {"operation": operation, **payload}
+def _show_investigation(st: object, investigation_id: str) -> None:
+    st.session_state.v05_active_id = investigation_id
+    st.session_state.v05_view = "detail"
+    st.session_state.v05_error = None
     st.rerun()
 
 
-def _perform_pending(st: object, service: InvestigatorReadyApprovalLoopService | None) -> None:
-    pending = st.session_state.v05_pending
-    if pending is None:
-        return
-    if service is None:
-        st.session_state.v05_error, st.session_state.v05_pending = "Local model configuration is unavailable.", None
-        return
-    operation = pending["operation"]
-    wording = operation_working_label(operation)
+def _prepare_and_show(
+    st: object, prepare: Callable[[], AgentOperation]
+) -> None:
     try:
-        with st.status(wording, expanded=True):
-            st.write("The agent is working. No new action is authorized during processing.")
-            if operation == "start":
-                state = service.start_investigation(
-                    pending["association"], pending["objective"]
-                )
-            elif operation == "modify":
-                state = service.modify(pending["investigation_id"], pending["proposal_id"], pending["instruction"])
-            elif operation == "decline":
-                state = service.decline(pending["investigation_id"], pending["proposal_id"], pending.get("guidance") or None)
-            elif operation == "retry":
-                state = service.retry_decline_reconsideration(pending["investigation_id"], pending["proposal_id"])
-            elif operation == "approve":
-                state = service.approve(pending["investigation_id"], pending["proposal_id"])
-            else:
-                raise ValueError("unknown UI operation")
-        st.session_state.v05_active_id, st.session_state.v05_view, st.session_state.v05_error = state.investigation.investigation_id, "detail", None
+        operation = prepare()
     except (InvestigatorReadyServiceError, ValueError, RuntimeError, OSError) as error:
         st.session_state.v05_error = _failure_message(error)
-    finally:
-        st.session_state.v05_pending = None
-    st.rerun()
+        st.rerun()
+    else:
+        _show_investigation(st, operation.investigation_id)
+
+
+def _render_back(st: object) -> None:
+    if st.button("← Back to Investigations"):
+        st.session_state.v05_active_id = None
+        st.session_state.v05_view = "list"
+        st.session_state.v05_error = None
+        st.rerun()
+
+
+def _render_acknowledged(operation_id: str) -> bool:
+    result = _RENDER_ACKNOWLEDGEMENT(
+        data={"operationId": operation_id},
+        key=f"operation-render-ack-{operation_id}",
+        on_acknowledged_operation_id_change=lambda: None,
+    )
+    return result.acknowledged_operation_id == operation_id
 
 
 def _render_list(st: object, projector: InvestigationReadProjector) -> None:
@@ -132,6 +222,7 @@ def _render_list(st: object, projector: InvestigationReadProjector) -> None:
 
 
 def _render_new(st: object, catalog: ConfiguredCaseCatalog, service: InvestigatorReadyApprovalLoopService | None) -> None:
+    _render_back(st)
     st.title("New investigation")
     cases = catalog.available_cases()
     labels = {case.case_reference + (f" — {case.domain}" if case.domain else ""): case for case in cases}
@@ -141,7 +232,12 @@ def _render_new(st: object, catalog: ConfiguredCaseCatalog, service: Investigato
     objective = st.text_area("Investigation objective", value=st.session_state.v05_new_objective, key="new-objective")
     if st.button("Start investigation", type="primary", disabled=service is None):
         st.session_state.v05_new_objective = objective
-        _queue(st, "start", association=selected.association_id, objective=objective)
+        _prepare_and_show(
+            st,
+            lambda: service.prepare_start_investigation(
+                selected.association_id, objective
+            ),
+        )
     if service is None:
         st.info("Local model configuration is required before investigation reasoning can start.")
 
@@ -160,13 +256,25 @@ def _render_history(st: object, detail: InvestigationDetail) -> None:
 
 def _render_attention(st: object, store: SQLiteInvestigationStore, catalog: ConfiguredCaseCatalog, detail: InvestigationDetail, service: InvestigatorReadyApprovalLoopService | None) -> None:
     reason = detail.attention_reason
-    if reason is AttentionReason.DECLINE_RECONSIDERATION_INCOMPLETE:
+    if reason in (AttentionReason.OPERATION_FAILED, AttentionReason.OPERATION_INTERRUPTED):
+        operation = detail.latest_operation
+        if operation is None:
+            st.error("The persisted operation state is unavailable.")
+            return
+        if reason is AttentionReason.OPERATION_FAILED:
+            st.error(operation_failure_message(operation.failure_category))
+        else:
+            st.warning("The previous processing attempt was interrupted.")
+        st.write("The previous proposal remains in its prior authoritative state. No new action was authorized.")
+        if st.button("Try again", disabled=service is None):
+            _prepare_and_show(
+                st, lambda: service.prepare_retry(operation.operation_id)
+            )
+    elif reason is AttentionReason.DECLINE_RECONSIDERATION_INCOMPLETE:
         st.error("THE AGENT COULD NOT COMPLETE THE PLAN ADJUSTMENT")
         declined = next((item for item in detail.decision_history if item.decision_type == "DECLINE" and detail.current_or_last_proposal and item.proposal_id == detail.current_or_last_proposal.proposal_id), None)
         st.write("Your instruction is saved." if declined and declined.instruction_or_reason else "The previous proposal was declined without additional guidance.")
         st.write("The previous proposal remains DECLINED. No new proposal was created and no action was authorized.")
-        if detail.current_or_last_proposal and st.button("Try again", disabled=service is None):
-            _queue(st, "retry", investigation_id=detail.investigation.investigation_id, proposal_id=detail.current_or_last_proposal.proposal_id)
     elif reason is AttentionReason.MISSING_PACKAGE_ASSOCIATION:
         st.error("This older investigation needs its case re-associated before it can continue.")
         cases = catalog.available_cases()
@@ -186,14 +294,45 @@ def _render_attention(st: object, store: SQLiteInvestigationStore, catalog: Conf
         st.error("The configured case context is currently unavailable.")
 
 
-def _render_detail(st: object, store: SQLiteInvestigationStore, catalog: ConfiguredCaseCatalog, projector: InvestigationReadProjector, service: InvestigatorReadyApprovalLoopService | None) -> None:
+def _render_working(
+    st: object,
+    detail: InvestigationDetail,
+    service: InvestigatorReadyApprovalLoopService | None,
+    runner_instance_id: str,
+) -> None:
+    operation = detail.latest_operation
+    if operation is None:
+        st.error("The persisted operation state is unavailable.")
+        return
+    st.subheader(operation_working_label(operation.operation_type))
+    st.info("The agent is working. No new action is authorized during processing.")
+    if operation.status != "PENDING_RENDER":
+        return
+    if service is None:
+        st.error("Local model configuration is required before processing can continue.")
+        return
+    if not _render_acknowledged(operation.operation_id):
+        return
+    try:
+        service.claim_and_execute_operation(operation.operation_id, runner_instance_id)
+    except (InvestigatorReadyServiceError, ValueError, RuntimeError, OSError):
+        pass
+    st.rerun()
+
+
+def _render_detail(st: object, store: SQLiteInvestigationStore, catalog: ConfiguredCaseCatalog, projector: InvestigationReadProjector, service: InvestigatorReadyApprovalLoopService | None, runner_instance_id: str) -> None:
     detail = projector.detail(st.session_state.v05_active_id)
+    _render_back(st)
     st.title(detail.investigation.case_reference)
     st.write(f"**Investigation objective:** {detail.investigation.objective if detail.investigation.objective is not None else 'Not recorded'}")
     if detail.context is not None:
         _render_context(st, detail.context)
     if detail.lifecycle_state is PersistedLifecycleState.ATTENTION:
         _render_attention(st, store, catalog, detail, service)
+        _render_history(st, detail)
+        return
+    if detail.lifecycle_state is PersistedLifecycleState.AGENT_WORKING:
+        _render_working(st, detail, service, runner_instance_id)
         _render_history(st, detail)
         return
     if detail.current_direction:
@@ -206,17 +345,36 @@ def _render_detail(st: object, store: SQLiteInvestigationStore, catalog: Configu
             st.write(f"- {item}")
     if detail.lifecycle_state is PersistedLifecycleState.NEEDS_REVIEW and detail.active_proposal:
         _render_proposal(st, detail.active_proposal)
-        if st.button("Approve"):
-            _queue(st, "approve", investigation_id=detail.investigation.investigation_id, proposal_id=detail.active_proposal.proposal_id)
+        if st.button("Approve", disabled=service is None):
+            service.approve(
+                detail.investigation.investigation_id,
+                detail.active_proposal.proposal_id,
+            )
+            st.rerun()
         st.write("Keep the basic proposed action, but change it according to your instruction.")
         modification = st.text_area("Modification instruction", key="modify-instruction")
-        if st.button("Modify"):
+        if st.button("Modify", disabled=service is None):
             if not modification.strip(): st.error("Modification instruction must be non-empty.")
-            else: _queue(st, "modify", investigation_id=detail.investigation.investigation_id, proposal_id=detail.active_proposal.proposal_id, instruction=modification)
+            else:
+                _prepare_and_show(
+                    st,
+                    lambda: service.prepare_modify(
+                        detail.investigation.investigation_id,
+                        detail.active_proposal.proposal_id,
+                        modification,
+                    ),
+                )
         guidance = st.text_area("Optional decline guidance", key="decline-guidance")
         st.write("The current proposal will be declined. The agent will reconsider the investigation plan using your instruction and return with a new proposed next action for your approval.")
-        if st.button("Adjust investigation plan" if guidance.strip() else "Decline without guidance"):
-            _queue(st, "decline", investigation_id=detail.investigation.investigation_id, proposal_id=detail.active_proposal.proposal_id, guidance=guidance)
+        if st.button("Adjust investigation plan" if guidance.strip() else "Decline without guidance", disabled=service is None):
+            _prepare_and_show(
+                st,
+                lambda: service.prepare_decline(
+                    detail.investigation.investigation_id,
+                    detail.active_proposal.proposal_id,
+                    optional_decline_reason(guidance),
+                ),
+            )
     elif detail.lifecycle_state is PersistedLifecycleState.APPROVED and detail.current_or_last_proposal:
         st.success("ACTION APPROVED")
         st.write("This analytical action is authorized.\nAnalytical execution is not implemented in this version.")
@@ -230,10 +388,12 @@ def main() -> None:
     _initialize(st)
     store, catalog, projector, service, configuration_error = _build_dependencies()
     try:
-        _perform_pending(st, service)
+        runner_instance_id = process_runner_instance_id()
+        if service is not None:
+            service.interrupt_previous_process_operations(runner_instance_id)
         if st.session_state.v05_error: st.error(st.session_state.v05_error)
         if st.session_state.v05_view == "new": _render_new(st, catalog, service)
-        elif st.session_state.v05_active_id: _render_detail(st, store, catalog, projector, service)
+        elif st.session_state.v05_active_id: _render_detail(st, store, catalog, projector, service, runner_instance_id)
         else: _render_list(st, projector)
         if configuration_error:
             with st.expander("Local model details"): st.write(configuration_error)

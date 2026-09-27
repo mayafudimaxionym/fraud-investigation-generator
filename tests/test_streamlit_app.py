@@ -1,11 +1,69 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from investigation.app import DEFAULT_OBJECTIVE, _build_dependencies, operation_working_label, optional_decline_reason, select_active_proposal
+from investigation.app import (
+    DEFAULT_OBJECTIVE,
+    _build_dependencies,
+    _render_attention,
+    _render_back,
+    _render_working,
+    configured_database_path,
+    operation_failure_message,
+    operation_working_label,
+    optional_decline_reason,
+    process_runner_instance_id,
+    select_active_proposal,
+)
 from investigation.models import AnalyticalActionProposal
+from investigation.read_model import AttentionReason, InvestigatorOperation
+
+
+class _RerunRequested(RuntimeError):
+    pass
+
+
+class _SessionState(dict[str, object]):
+    def __getattr__(self, name: str) -> object:
+        return self[name]
+
+    def __setattr__(self, name: str, value: object) -> None:
+        self[name] = value
+
+
+class _FakeStreamlit:
+    def __init__(self, clicked: set[str] | None = None) -> None:
+        self.session_state = _SessionState(
+            v05_active_id="investigation-001",
+            v05_view="detail",
+            v05_error=None,
+        )
+        self.clicked = clicked or set()
+        self.rendered: list[tuple[str, str]] = []
+
+    def button(self, label: str, **_: object) -> bool:
+        return label in self.clicked
+
+    def subheader(self, value: str) -> None:
+        self.rendered.append(("subheader", value))
+
+    def info(self, value: str) -> None:
+        self.rendered.append(("info", value))
+
+    def error(self, value: str) -> None:
+        self.rendered.append(("error", value))
+
+    def warning(self, value: str) -> None:
+        self.rendered.append(("warning", value))
+
+    def write(self, value: str) -> None:
+        self.rendered.append(("write", value))
+
+    def rerun(self) -> None:
+        raise _RerunRequested
 
 
 def _proposal(proposal_id: str, status: str) -> AnalyticalActionProposal:
@@ -66,6 +124,9 @@ def test_initial_streamlit_screen_renders_without_invoking_ollama(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(
+        "INVESTIGATION_DATABASE_PATH", str(tmp_path / "investigations.sqlite")
+    )
     app = AppTest.from_file(Path(__file__).parents[1] / "investigation" / "app.py")
 
     app.run()
@@ -85,9 +146,157 @@ def test_default_objective_is_exact_and_blank_is_preserved() -> None:
 
 
 def test_working_labels_are_transient_operation_labels_without_progress_or_eta() -> None:
-    assert operation_working_label("start") == "Preparing investigation approach"
-    for operation in ("modify", "decline", "retry", "approve"):
+    assert operation_working_label("START") == "Preparing investigation approach"
+    assert operation_working_label("MODIFY") == "Revising proposed action"
+    for operation in ("DECLINE_REDIRECT", "DECLINE_RECONSIDER"):
         assert operation_working_label(operation) == "Adjusting investigation plan"
+
+
+def test_database_path_has_deterministic_default_and_absolute_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = Path(__file__).parents[1] / "investigations.sqlite"
+    monkeypatch.chdir(tmp_path)
+    assert configured_database_path({}) == expected
+    override = tmp_path / "state" / "investigations.sqlite"
+    assert configured_database_path(
+        {"INVESTIGATION_DATABASE_PATH": str(override)}
+    ) == override
+    with pytest.raises(ValueError, match="must be an absolute path"):
+        configured_database_path(
+            {"INVESTIGATION_DATABASE_PATH": "relative/investigations.sqlite"}
+        )
+
+
+def test_process_runner_identity_is_stable_for_the_process() -> None:
+    assert process_runner_instance_id() == process_runner_instance_id()
+
+
+def test_back_navigation_changes_only_presentation_state() -> None:
+    st = _FakeStreamlit({"← Back to Investigations"})
+
+    with pytest.raises(_RerunRequested):
+        _render_back(st)
+
+    assert st.session_state.v05_active_id is None
+    assert st.session_state.v05_view == "list"
+    assert st.session_state.v05_error is None
+
+
+def test_pending_work_renders_before_browser_acknowledgement_and_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    st = _FakeStreamlit()
+    detail = SimpleNamespace(
+        latest_operation=InvestigatorOperation(
+            "operation-001", "START", "PENDING_RENDER", None
+        )
+    )
+    calls: list[tuple[str, str]] = []
+    service = SimpleNamespace(
+        claim_and_execute_operation=lambda operation_id, runner_id: calls.append(
+            (operation_id, runner_id)
+        )
+    )
+    monkeypatch.setattr("investigation.app._render_acknowledged", lambda _: False)
+
+    _render_working(st, detail, service, "runner-process")
+
+    assert calls == []
+    assert ("subheader", "Preparing investigation approach") in st.rendered
+    assert any("No new action is authorized" in value for _, value in st.rendered)
+
+    monkeypatch.setattr("investigation.app._render_acknowledged", lambda _: True)
+    with pytest.raises(_RerunRequested):
+        _render_working(st, detail, service, "runner-process")
+    assert calls == [("operation-001", "runner-process")]
+
+
+def test_running_work_never_attempts_another_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    st = _FakeStreamlit()
+    detail = SimpleNamespace(
+        latest_operation=InvestigatorOperation(
+            "operation-001", "MODIFY", "RUNNING", None
+        )
+    )
+    service = SimpleNamespace(
+        claim_and_execute_operation=lambda *_: pytest.fail("must not redispatch RUNNING")
+    )
+    monkeypatch.setattr(
+        "investigation.app._render_acknowledged",
+        lambda _: pytest.fail("RUNNING must not request another acknowledgement"),
+    )
+
+    _render_working(st, detail, service, "runner-process")
+
+    assert ("subheader", "Revising proposed action") in st.rendered
+
+
+@pytest.mark.parametrize(
+    ("reason", "status", "category", "message_kind"),
+    (
+        (
+            AttentionReason.OPERATION_FAILED,
+            "FAILED",
+            "REQUEST_TIMEOUT",
+            "error",
+        ),
+        (
+            AttentionReason.OPERATION_INTERRUPTED,
+            "INTERRUPTED",
+            None,
+            "warning",
+        ),
+    ),
+)
+def test_operation_attention_is_actionable_and_retry_is_prepared(
+    reason: AttentionReason,
+    status: str,
+    category: str | None,
+    message_kind: str,
+) -> None:
+    st = _FakeStreamlit({"Try again"})
+    detail = SimpleNamespace(
+        attention_reason=reason,
+        latest_operation=InvestigatorOperation(
+            "operation-prior", "START", status, category
+        ),
+    )
+    calls: list[str] = []
+    service = SimpleNamespace(
+        prepare_retry=lambda operation_id: (
+            calls.append(operation_id)
+            or SimpleNamespace(investigation_id="investigation-001")
+        )
+    )
+
+    with pytest.raises(_RerunRequested):
+        _render_attention(st, None, None, detail, service)
+
+    assert calls == ["operation-prior"]
+    assert any(kind == message_kind for kind, _ in st.rendered)
+
+
+def test_every_persisted_failure_category_has_safe_investigator_copy() -> None:
+    categories = (
+        "SERVICE_UNAVAILABLE",
+        "MODEL_UNAVAILABLE",
+        "REQUEST_TIMEOUT",
+        "GENERATION_ERROR",
+        "PERSISTENCE_ERROR",
+        "SAFE_CONTEXT_UNAVAILABLE",
+        "PACKAGE_ASSOCIATION_UNAVAILABLE",
+        "OBJECTIVE_UNAVAILABLE",
+        "DIRECTION_UNAVAILABLE",
+        "UNKNOWN_FAILURE",
+    )
+    assert all(
+        operation_failure_message(category)
+        != "The investigation request could not be completed."
+        for category in categories
+    )
 
 
 def test_investigator_ui_uses_safe_boundaries_and_no_execution_path() -> None:
@@ -97,4 +306,9 @@ def test_investigator_ui_uses_safe_boundaries_and_no_execution_path() -> None:
     assert "csv.reader" not in source
     assert ".execute(" not in source
     assert "def execute" not in source
-    assert "try again" in source and "retry_decline_reconsideration" in source
+    assert "try again" in source and "prepare_retry" in source
+    assert "prepare_start_investigation" in source
+    assert "prepare_modify" in source and "prepare_decline" in source
+    assert "service.start_investigation(" not in source
+    assert "service.modify(" not in source and "service.decline(" not in source
+    assert "retry_decline_reconsideration" not in source
