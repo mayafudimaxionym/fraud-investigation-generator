@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from http.client import HTTPException
 from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -186,7 +187,7 @@ class OllamaProposalClient:
                 ProposalModelFailureCategory.GENERATION_ERROR,
                 "local Ollama preflight returned an invalid response",
             ) from error
-        except URLError as error:
+        except (URLError, ConnectionError, HTTPException) as error:
             raise ProposalModelError(
                 ProposalModelFailureCategory.SERVICE_UNAVAILABLE,
                 "local Ollama service is unavailable",
@@ -241,10 +242,10 @@ class OllamaProposalClient:
                 else ProposalModelFailureCategory.GENERATION_ERROR
             )
             raise ProposalModelError(category, "local Ollama proposal request failed") from error
-        except URLError as error:
+        except (URLError, ConnectionError, HTTPException) as error:
             raise ProposalModelError(
                 ProposalModelFailureCategory.SERVICE_UNAVAILABLE,
-                "local Ollama service is unavailable",
+                "local Ollama service connection was interrupted",
             ) from error
         except (UnicodeError, json.JSONDecodeError) as error:
             raise ProposalModelError(

@@ -1,6 +1,7 @@
 import csv
 import json
 from datetime import datetime, timezone
+from http.client import IncompleteRead, RemoteDisconnected
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
@@ -52,6 +53,14 @@ class FakeOllamaReply:
 
     def read(self) -> bytes:
         return self._body
+
+
+class InterruptedOllamaReply(FakeOllamaReply):
+    def __init__(self, failure: BaseException) -> None:
+        self._failure = failure
+
+    def read(self) -> bytes:
+        raise self._failure
 
 
 def _context() -> InvestigatorPackageContext:
@@ -619,6 +628,33 @@ def test_generation_failure_categories_make_one_request_without_retry(
     with pytest.raises(ProposalModelError) as error:
         OllamaProposalClient(_config()).generate("prompt")
     assert error.value.category is expected_category
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        RemoteDisconnected("remote closed a sensitive local endpoint"),
+        ConnectionResetError("connection reset at a sensitive local endpoint"),
+        IncompleteRead(b'partial {"response":'),
+    ),
+)
+def test_interrupted_http_response_is_safe_service_failure_without_retry(
+    monkeypatch: pytest.MonkeyPatch, failure: BaseException
+) -> None:
+    calls: list[object] = []
+
+    def interrupted(request: object, **_kwargs: object) -> InterruptedOllamaReply:
+        calls.append(request)
+        return InterruptedOllamaReply(failure)
+
+    monkeypatch.setattr("investigation.proposal_agent.urlopen", interrupted)
+    with pytest.raises(ProposalModelError) as raised:
+        OllamaProposalClient(_config()).generate("prompt")
+
+    assert raised.value.category is ProposalModelFailureCategory.SERVICE_UNAVAILABLE
+    assert str(failure) not in str(raised.value)
+    assert "localhost:11434" not in str(raised.value)
     assert len(calls) == 1
 
 

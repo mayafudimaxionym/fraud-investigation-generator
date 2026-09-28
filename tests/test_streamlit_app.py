@@ -1,6 +1,13 @@
 from datetime import datetime, timezone
+from html import unescape
 from pathlib import Path
+import json
+import shutil
+import socket
+import subprocess
+import time
 from types import SimpleNamespace
+from urllib.request import urlopen
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -8,6 +15,7 @@ from streamlit.testing.v1 import AppTest
 from investigation.app import (
     DEFAULT_OBJECTIVE,
     INVALID_LOCAL_MODEL_CONFIGURATION_MESSAGE,
+    _RUNNING_OPERATION_REFRESH_JAVASCRIPT,
     _UnavailableProposalClient,
     _build_dependencies,
     _render_attention,
@@ -28,6 +36,20 @@ from investigation.read_model import AttentionReason, InvestigatorOperation
 
 class _RerunRequested(RuntimeError):
     pass
+
+
+def _installed_browser() -> str | None:
+    candidates = (
+        shutil.which("msedge"),
+        shutil.which("google-chrome"),
+        shutil.which("chromium"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    )
+    return next(
+        (str(path) for path in candidates if path and Path(path).is_file()), None
+    )
 
 
 class _SessionState(dict[str, object]):
@@ -293,6 +315,114 @@ def test_running_work_never_attempts_another_dispatch(
     assert refreshes == ["operation-001"]
 
 
+def test_running_refresh_component_repeats_real_browser_callbacks_and_cleans_up(
+    tmp_path: Path,
+) -> None:
+    browser = _installed_browser()
+    if browser is None:
+        pytest.skip("a Chromium browser is required for component lifecycle coverage")
+    javascript = _RUNNING_OPERATION_REFRESH_JAVASCRIPT.replace(
+        "export default function(component)", "function mount(component)"
+    )
+    page = tmp_path / "running-refresh-component.html"
+    page.write_text(
+        f"""<!doctype html><html><body>pending<script>
+{javascript}
+const values = [];
+const parentElement = document.createElement("div");
+const component = {{
+    data: {{operationId: "operation-001", delayMs: 40}},
+    parentElement,
+    setTriggerValue: (name, value) => values.push({{name, value}}),
+}};
+let activeCleanup = mount(component);
+setTimeout(() => {{ activeCleanup = mount(component); }}, 90);
+setTimeout(() => {{
+    activeCleanup();
+    window.countAtCleanup = values.length;
+}}, 330);
+setTimeout(() => {{
+    document.body.textContent = JSON.stringify({{
+        values,
+        stoppedAfterCleanup: values.length === window.countAtCleanup,
+        timerRemoved: parentElement.__v05RunningOperationRefreshTimer === undefined,
+    }});
+}}, 650);
+</script></body></html>""",
+        encoding="utf-8",
+    )
+    websocket_client = pytest.importorskip("websockets.sync.client")
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    profile = tmp_path / "browser-profile"
+    browser_process = subprocess.Popen(
+        (
+            browser,
+            "--headless=new",
+            "--disable-gpu",
+            "--disable-background-mode",
+            "--disable-features=msEdgeStartupBoost,msEdgeBackgroundMode",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--no-sandbox",
+            "--remote-allow-origins=*",
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={profile}",
+            "about:blank",
+        ),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        targets: list[dict[str, object]] | None = None
+        for _ in range(100):
+            try:
+                with urlopen(f"http://127.0.0.1:{port}/json", timeout=1) as reply:
+                    targets = json.load(reply)
+                break
+            except OSError:
+                time.sleep(0.05)
+        assert targets is not None
+        target = next(item for item in targets if item.get("type") == "page")
+        websocket_url = target["webSocketDebuggerUrl"]
+        assert isinstance(websocket_url, str)
+        with websocket_client.connect(websocket_url, open_timeout=5) as devtools:
+            command_id = 0
+
+            def command(method: str, params: dict[str, object]) -> dict[str, object]:
+                nonlocal command_id
+                command_id += 1
+                devtools.send(
+                    json.dumps({"id": command_id, "method": method, "params": params})
+                )
+                while True:
+                    response = json.loads(devtools.recv(timeout=5))
+                    if response.get("id") == command_id:
+                        return response
+
+            command("Page.navigate", {"url": page.as_uri()})
+            rendered = ""
+            for _ in range(50):
+                time.sleep(0.05)
+                response = command(
+                    "Runtime.evaluate", {"expression": "document.body.textContent"}
+                )
+                rendered = str(response["result"]["result"].get("value", ""))
+                if rendered.startswith("{"):
+                    break
+            result = json.loads(unescape(rendered))
+    finally:
+        browser_process.terminate()
+        browser_process.wait(timeout=5)
+    values = result["values"]
+    assert len(values) >= 4
+    assert {item["name"] for item in values} == {"refresh_nonce"}
+    assert len({item["value"] for item in values}) == len(values)
+    assert result["stoppedAfterCleanup"] is True
+    assert result["timerRemoved"] is True
+
+
 @pytest.mark.parametrize(
     ("reason", "status", "category", "message_kind"),
     (
@@ -415,6 +545,12 @@ def test_every_persisted_failure_category_has_safe_investigator_copy() -> None:
     assert operation_failure_message("GENERATION_ERROR") == (
         "The agent response did not satisfy the required response contract."
     )
+    service_copy = operation_failure_message("SERVICE_UNAVAILABLE")
+    assert service_copy == (
+        "The local model service is unavailable or its connection was interrupted."
+    )
+    assert "http://" not in service_copy
+    assert "OLLAMA" not in service_copy
 
 
 def test_investigator_ui_uses_safe_boundaries_and_no_execution_path() -> None:

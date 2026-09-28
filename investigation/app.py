@@ -55,20 +55,33 @@ _RENDER_ACKNOWLEDGEMENT = _streamlit.components.v2.component(
     """,
 )
 
-_RUNNING_OPERATION_REFRESH = _streamlit.components.v2.component(
-    "running_operation_refresh",
-    js="""
+_RUNNING_OPERATION_REFRESH_JAVASCRIPT = """
     export default function(component) {
-        const { data, setTriggerValue } = component;
-        const timeoutId = setTimeout(() => {
+        const { data, parentElement, setTriggerValue } = component;
+        const timerKey = "__v05RunningOperationRefreshTimer";
+        const existingTimer = parentElement[timerKey];
+        if (existingTimer !== undefined) {
+            clearInterval(existingTimer);
+        }
+        const timerId = setInterval(() => {
             setTriggerValue(
                 "refresh_nonce",
                 `${data.operationId}:${Date.now()}`,
             );
         }, data.delayMs);
-        return () => { clearTimeout(timeoutId); };
+        parentElement[timerKey] = timerId;
+        return () => {
+            if (parentElement[timerKey] === timerId) {
+                clearInterval(timerId);
+                delete parentElement[timerKey];
+            }
+        };
     }
-    """,
+    """
+
+_RUNNING_OPERATION_REFRESH = _streamlit.components.v2.component(
+    "running_operation_refresh",
+    js=_RUNNING_OPERATION_REFRESH_JAVASCRIPT,
 )
 
 
@@ -179,7 +192,9 @@ def operation_working_label(operation: str) -> str:
 def operation_failure_message(category: str | None) -> str:
     """Translate one persisted safe failure category into investigator language."""
     return {
-        "SERVICE_UNAVAILABLE": "The local model service is unavailable.",
+        "SERVICE_UNAVAILABLE": (
+            "The local model service is unavailable or its connection was interrupted."
+        ),
         "MODEL_UNAVAILABLE": "The configured local model is unavailable.",
         "REQUEST_TIMEOUT": "The local model request timed out.",
         "GENERATION_ERROR": (

@@ -486,8 +486,9 @@ def test_decline_commits_before_failed_reconsideration_and_retry_does_not_duplic
     store, service, agent, preflight = _service(tmp_path)
     state = _start(service)
     original = _initial_proposal(state)
-    preflight.failure = ProposalModelError(
-        ProposalModelFailureCategory.SERVICE_UNAVAILABLE, "service unavailable"
+    agent.failure = ProposalModelError(
+        ProposalModelFailureCategory.SERVICE_UNAVAILABLE,
+        "local model transport was interrupted",
     )
 
     with pytest.raises(InvestigatorReadyServiceError) as failed:
@@ -497,16 +498,36 @@ def test_decline_commits_before_failed_reconsideration_and_retry_does_not_duplic
     committed = service.get_state(state.investigation.investigation_id)
     assert committed.proposals[0].status == "DECLINED"
     assert committed.decisions[0].instruction_or_reason == "Review relationships instead."
-    assert len(agent.requests) == 1
+    assert len(committed.proposals) == 1
+    assert len(committed.directions) == 1
+    assert len(committed.decisions) == 1
+    failed_operation = store.list_agent_operations(
+        state.investigation.investigation_id
+    )[-1]
+    assert failed_operation.status == "FAILED"
+    assert failed_operation.failure_category == "SERVICE_UNAVAILABLE"
+    assert failed_operation.failure_category != "PERSISTENCE_ERROR"
+    assert len(agent.requests) == 2
 
-    preflight.failure = None
+    service.get_state(state.investigation.investigation_id)
+    assert len(store.list_agent_operations(state.investigation.investigation_id)) == 2
+    assert len(agent.requests) == 2
+
+    agent.failure = None
     retried = service.retry_decline_reconsideration(
         state.investigation.investigation_id, original.proposal_id
     )
     assert len(retried.decisions) == 1
     replacement = _initial_proposal(retried)
     assert replacement.revised_from_proposal_id is None
-    assert len(agent.requests) == 2
+    assert len(agent.requests) == 3
+    operations = store.list_agent_operations(state.investigation.investigation_id)
+    assert len(operations) == 3
+    retry_operation = operations[-1]
+    assert retry_operation.status == "COMPLETED"
+    assert retry_operation.prior_attempt_operation_id == failed_operation.operation_id
+    assert retry_operation.triggering_decision_id == failed_operation.triggering_decision_id
+    assert retry_operation.triggering_decision_id == retried.decisions[0].decision_id
     result = store.get_decline_reconsideration_result(retried.decisions[0].decision_id)
     assert result is not None and result.replacement_proposal_id == replacement.proposal_id
     with pytest.raises(ValueError, match="persisted replacement"):

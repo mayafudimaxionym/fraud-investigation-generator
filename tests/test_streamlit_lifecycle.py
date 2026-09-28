@@ -332,6 +332,13 @@ def test_resumed_running_operation_automatically_refreshes_to_needs_review(
         item.value for item in app.subheader
     ]
 
+    _run_with_running_refresh(app, operation_id)
+    assert _operation(database_path, investigation_id).status == "RUNNING"
+    assert "Preparing investigation approach" in [
+        item.value for item in app.subheader
+    ]
+    assert len(client.prompts) == 1
+
     client.release.set()
     worker.join(timeout=5)
     assert not worker.is_alive()
@@ -448,7 +455,7 @@ def test_modify_and_decline_each_dispatch_once_and_render_authoritative_result(
     assert "Proposed next analytical action" in [item.value for item in app.subheader]
 
 
-def test_decline_failure_attention_and_explicit_retry_do_not_duplicate_decision(
+def test_decline_transport_failure_attention_and_retry_do_not_duplicate_decision(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "failure-retry.sqlite"
@@ -462,12 +469,19 @@ def test_decline_failure_attention_and_explicit_retry_do_not_duplicate_decision(
     _button(app, "Adjust investigation plan").click().run()
     failed_operation = _operation(database_path, investigation_id)
     client.failure = ProposalModelError(
-        ProposalModelFailureCategory.REQUEST_TIMEOUT, "simulated timeout"
+        ProposalModelFailureCategory.SERVICE_UNAVAILABLE,
+        "remote disconnected from http://sensitive-local-endpoint",
     )
     _run_with_acknowledgement(app, failed_operation.operation_id)
 
     assert _operation(database_path, investigation_id).status == "FAILED"
-    assert "The local model request timed out." in [item.value for item in app.error]
+    assert (
+        "The local model service is unavailable or its connection was interrupted."
+        in [item.value for item in app.error]
+    )
+    rendered_errors = "\n".join(item.value for item in app.error)
+    assert "sensitive-local-endpoint" not in rendered_errors
+    assert "http://" not in rendered_errors
     assert "Try again" in [item.label for item in app.button]
     with SQLiteInvestigationStore(database_path) as store:
         assert len(store.list_decisions(investigation_id)) == 1
