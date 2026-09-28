@@ -416,6 +416,70 @@ def test_prompt_requires_analytical_discipline_and_uses_governed_context_only() 
         assert ", ".join(dataset.field_names) in prompt
 
 
+def test_prompt_distinguishes_the_multi_step_plan_from_one_bounded_next_action() -> None:
+    prompt = build_proposal_prompt(_request())
+
+    for requirement in (
+        "only one bounded part or step of that broader plan",
+        "meaningfully narrower than the complete plan",
+        "must not combine, summarize, or execute the entire plan",
+        "if the plan includes event-timing analysis and relationship analysis",
+        "select only one of those activities as the proposed action",
+        "The action is neither authorized nor executed",
+    ):
+        assert requirement in prompt
+
+
+def test_prompt_applies_modify_and_decline_constraints_to_the_complete_response() -> None:
+    prompt = build_proposal_prompt(_request(mode="MODIFY"))
+
+    assert "For both Modify and guided Decline" in prompt
+    assert "every explicit investigator constraint" in prompt
+    assert "competing_explanations, every plan_steps entry" in prompt
+    assert (
+        "all five proposal fields (action, purpose, why_now, data_to_be_used, and "
+        "expected_output)" in prompt
+    )
+    assert "prohibited data source, field, time range, analytical focus" in prompt
+    assert "exclusion, or assumption" in prompt
+
+
+def test_prompt_limits_every_reference_to_available_datasets_and_fields() -> None:
+    prompt = build_proposal_prompt(_request())
+
+    assert "only dataset names and fields explicitly listed" in prompt
+    assert (
+        "IP address, device identifier, authentication method, amount, location, or "
+        "customer identity" in prompt
+    )
+    assert "acknowledge that limitation in the appropriate proposal field" in prompt
+    assert "rather than inventing evidence" in prompt
+
+
+def test_prompt_requests_silent_same_call_review_without_changing_the_json_contract() -> None:
+    prompt = build_proposal_prompt(_request())
+
+    assert "silently review the complete response in this same generation call" in prompt
+    assert "the plan is genuinely multi-step" in prompt
+    assert "the action covers only one bounded part of it" in prompt
+    assert "every investigator constraint is followed throughout" in prompt
+    assert "all referenced datasets and fields are available" in prompt
+    assert "remains provisional without claiming analysis was executed" in prompt
+    assert "Do not output the review, a compliance claim, a self-attestation, or a reasoning trace" in prompt
+    assert "do not add any JSON fields" in prompt
+    assert prompt.startswith(
+        "Return JSON only with exactly this shape:\n"
+        '{"competing_explanations": ["..."], "plan_steps": ["..."], '
+        '"proposal": {"action": "...", "purpose": "...", "why_now": "...", '
+        '"data_to_be_used": "...", "expected_output": "..."}}'
+    )
+
+    payload_with_attestation = json.loads(_payload())
+    payload_with_attestation["compliance_review"] = "passed"
+    with pytest.raises(ValueError, match="exactly the required fields"):
+        parse_proposal_model_response(json.dumps(payload_with_attestation))
+
+
 def test_structured_rows_and_evaluator_content_cannot_enter_prompt(tmp_path: Path) -> None:
     package = export_development_investigation_package(tmp_path)
     marker = "UNIQUE-PROPOSAL-PROMPT-ROW-MARKER"
