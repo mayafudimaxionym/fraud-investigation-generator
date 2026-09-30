@@ -29,16 +29,16 @@ Concretely, capacity must never change:
 |---|---|---|---|
 | Product & Architecture Planner | Claude | Product behavior, architecture, specifications, acceptance requirements, ADRs | Exists |
 | Implementation Engineer | Claude | Product implementation of approved decisions | Exists |
-| Independent Reviewer | Claude | Independent review of implementation work | **Role defined; no dedicated agent provisioned** |
+| Independent Reviewer | Claude | Independent review of implementation work | Exists |
 | QA & Workflow Validation Engineer | Claude | *Running* validation; PASS/FAIL/BLOCKED verdicts with evidence | Exists |
 | AI Model Qualification Researcher | Claude | Controlled experiments, structural evidence, analysis, recommendations | Exists |
 | QA Automation Developer | Codex | Building bounded QA automation and validation/test infrastructure | **Exists and is in active use** |
 
 **Maya (Product Owner)** is the human authority and is not a role in the table above. Maya retains final authority over material product behavior changes, architecture changes, milestone scope, human/agent governance, destructive or irreversible repository actions, major new dependencies affecting architecture, and final milestone acceptance. Approval is never inferred from silence.
 
-**Current-state note (verified against the agent roster, 2026-09-30).** The Status column records whether an agent is actually provisioned, not whether the role is desirable. Five agents exist: Product & Architecture Planner, Implementation Engineer, QA & Workflow Validation Engineer, AI Model Qualification Researcher, and QA Automation Developer.
+**Current-state note (verified against the agent roster, 2026-09-30).** The Status column records whether an agent is actually provisioned, not whether the role is desirable. Six agents exist: Product & Architecture Planner, Implementation Engineer, Independent Reviewer, QA & Workflow Validation Engineer, AI Model Qualification Researcher, and QA Automation Developer.
 
-**No dedicated Independent Reviewer agent is provisioned.** Independent review work must therefore be routed explicitly by Maya until one is. It must not be silently absorbed by the QA & Workflow Validation Engineer, whose authority is to *run* validation and report PASS/FAIL/BLOCKED verdicts, not to review implementation on quality terms. Provisioning any new agent is a human/agent governance change requiring Maya's explicit authorization. Maya authorized provisioning this role on 2026-09-30 and approved the escalation path in 2.2 below; the instruction bundle is drafted, but the agent is not yet provisioned because the Planner lacks the `agents:create` grant. The Status column stays as recorded until the agent appears on the roster.
+**The Independent Reviewer is provisioned.** Maya authorized the role on 2026-09-30 and approved the escalation path in 2.2 below; the agent was created the same day and is on the roster. Independent review work routes to it. It must never be silently absorbed by the QA & Workflow Validation Engineer, whose authority is to *run* validation and report PASS/FAIL/BLOCKED verdicts, not to review implementation on quality terms. Provisioning any further agent remains a human/agent governance change requiring Maya's explicit authorization.
 
 This column must be corrected whenever the roster changes. A role recorded as existing when it does not produces authorized handoffs with no owner, which is the failure this note exists to prevent.
 
