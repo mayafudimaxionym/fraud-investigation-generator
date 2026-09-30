@@ -8,3 +8,6 @@ venv/
 # Generated investigation runtime artifacts
 /investigations.sqlite
 /output/
+
+# Qualification harness raw captures and per-run records (PO-4: out of version control)
+/validation/runs/

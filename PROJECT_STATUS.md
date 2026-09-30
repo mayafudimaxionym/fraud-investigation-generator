@@ -67,8 +67,13 @@ V0 — Agent / Human Approval Loop is **IMPLEMENTED / ACCEPTANCE VERIFIED**. V0.
 
 ## Current uncommitted work
 
-- Presentation-only recurring completion refresh and local-model transport-disconnect classification remediations are implemented for independent review. Browser callback, Streamlit lifecycle, transport, atomic failure, and explicit linked-retry coverage are included. The durable-operation dispatch, one-call contract, semantic contract, and human semantic-review boundary are unchanged.
+- The presentation-only recurring completion refresh and local-model transport-disconnect classification remediations are **committed in `a3bff81`**, not uncommitted. They remain pending independent review and manual retest. Browser callback, Streamlit lifecycle, transport, atomic failure, and explicit linked-retry coverage are included. The durable-operation dispatch, one-call contract, semantic contract, and human semantic-review boundary are unchanged.
 - Local generated/runtime artifacts may exist outside version control, including `investigations.sqlite`, `output/`, external `antigravity_critic_v05*.md` audits, and manual-acceptance databases. They are not authoritative project state.
+
+## Validation tooling
+
+- The **Model Qualification Harness** is implemented under `validation/qualification/` per `docs/specs/V0_5_ACCEPTANCE_OPERATING_MODEL.md` §4, at the §2.1 observation counts (10 structural and 3 semantic runs of each of INITIAL, MODIFY and DECLINE/redirect, per candidate configuration). It is offline research tooling: no Streamlit, no browser, no investigation database, and nothing it produces is wired into the application. It consumes the product's own contract code rather than restating it, produces no automated quality score of any kind, and does not change product behavior. See `validation/README.md`.
+- No qualification campaign has been run with it. Running experiments is separate work owned by the AI Model Qualification Researcher, and `validation/qualification/summaries/` is empty until one is run.
 
 ## Current blockers
 

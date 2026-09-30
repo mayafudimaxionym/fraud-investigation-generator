@@ -1,0 +1,25 @@
+{
+  "scenario_id": "v05-representative-chain",
+  "name": "V0.5 representative INITIAL / MODIFY / DECLINE chain",
+  "description": "The three representative V0.5 semantic scenarios as one chained scenario, using the exact objective, Modify instruction and Decline guidance texts from the recorded manual acceptance attempts at 0d4a79e and 6e3f147. MODIFY and DECLINE_REDIRECT run against the real generated prior state from the preceding step so instruction adherence and constraint preservation are observable across turns. The Modify instruction carries explicit dataset, 72-hour and no-device-inference constraints because the recorded failure was constraint preservation, not structure.",
+  "package_directory": "output/development-case-42",
+  "steps": [
+    {
+      "step_id": "initial",
+      "mode": "INITIAL",
+      "objective": "Investigate the reported suspicious activity, identify relevant patterns and relationships, and assess the plausible explanations without assuming any explanation is established in advance."
+    },
+    {
+      "step_id": "modify",
+      "mode": "MODIFY",
+      "objective": "Investigate the reported suspicious activity, identify relevant patterns and relationships, and assess the plausible explanations without assuming any explanation is established in advance.",
+      "investigator_instruction": "Keep the proposed action, but limit it to visible_events.csv only and to the 72 hours surrounding the disputed transfers. Do not infer device or IP evidence because those fields are not available. The expected output must be a chronological table of relevant login and transfer events, followed by a short limitations note."
+    },
+    {
+      "step_id": "decline-redirect",
+      "mode": "DECLINE_REDIRECT",
+      "objective": "Investigate the reported suspicious activity, identify relevant patterns and relationships, and assess the plausible explanations without assuming any explanation is established in advance.",
+      "decline_guidance": "Decline this temporal event-sequence approach. Redirect the investigation to relationship structure only: use visible_relationships.csv and visible_entities.csv, exclude visible_events.csv, assess whether the subject shares counterparties or relationship types with other visible entities, and return one bounded relationship-mapping action for separate review."
+    }
+  ]
+}
