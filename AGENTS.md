@@ -9,6 +9,7 @@ Before proposing or implementing framework changes, read:
 3. `docs/ARCHITECTURE.md`
 4. Current milestone specifications in `docs/specs/`
 5. Relevant documents in `docs/decisions/`
+6. `docs/AGENT_OPERATING_MODEL.md` — role ownership, human authority, capacity handling, and task sizing
 
 ## Authority
 
