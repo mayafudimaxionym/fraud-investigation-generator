@@ -38,7 +38,7 @@ Concretely, capacity must never change:
 
 **Current-state note (verified against the agent roster, 2026-09-30).** The Status column records whether an agent is actually provisioned, not whether the role is desirable. Five agents exist: Product & Architecture Planner, Implementation Engineer, QA & Workflow Validation Engineer, AI Model Qualification Researcher, and QA Automation Developer.
 
-**No dedicated Independent Reviewer agent is provisioned.** Independent review work must therefore be routed explicitly by Maya until one is. It must not be silently absorbed by the QA & Workflow Validation Engineer, whose authority is to *run* validation and report PASS/FAIL/BLOCKED verdicts, not to review implementation on quality terms. Provisioning any new agent is a human/agent governance change requiring Maya's explicit authorization.
+**No dedicated Independent Reviewer agent is provisioned.** Independent review work must therefore be routed explicitly by Maya until one is. It must not be silently absorbed by the QA & Workflow Validation Engineer, whose authority is to *run* validation and report PASS/FAIL/BLOCKED verdicts, not to review implementation on quality terms. Provisioning any new agent is a human/agent governance change requiring Maya's explicit authorization. Maya authorized provisioning this role on 2026-09-30 and approved the escalation path in 2.2 below; the instruction bundle is drafted, but the agent is not yet provisioned because the Planner lacks the `agents:create` grant. The Status column stays as recorded until the agent appears on the roster.
 
 This column must be corrected whenever the roster changes. A role recorded as existing when it does not produces authorized handoffs with no owner, which is the failure this note exists to prevent.
 
@@ -55,6 +55,24 @@ Its implementation boundary is deliberately narrow:
 - Its implementation output is reviewed on the same quality terms as any other implementation work. Provider diversification does not diversify the quality bar.
 
 **Provider availability never changes role ownership.** The role that *builds* validation automation stays distinct from the role that *runs* it and reports verdicts.
+
+---
+
+### 2.2 Independent Reviewer — finding disposition and the narrow independence-escalation path (approved 2026-09-30)
+
+The Independent Reviewer's deliverable is a review report: findings anchored to a file and line, each citing the committed clause it concerns, each with a concrete failure scenario, a severity, and a disposition route. **A review finding does not change approved design.** It is evidence and a recommendation, never an authorization to alter a specification, an ADR, an invariant, or an acceptance criterion. The Reviewer does not implement, does not fix what it finds, does not define expected product behavior, does not issue product acceptance verdicts, and does not create follow-up issues.
+
+**Normal disposition routes through the Product & Architecture Planner.** Ordinary implementation defects and missing implementation tests route to the Implementation Engineer; genuine product or architecture ambiguity routes to the Planner; material changes reach Maya through the Planner. This is the default and covers nearly every case, and it is what keeps a finding from silently becoming an approved change.
+
+**The Independent Reviewer may escalate directly to Maya only when one of the following holds:**
+
+1. a **material** finding concerns the Planner's own specification or architecture decision and cannot be resolved through normal disposition;
+2. the Planner **declines, suppresses, or fails to preserve** a material review finding; or
+3. a **governance or independence conflict** makes routing solely through the Planner inappropriate.
+
+The path exists because routing every finding through the author of the specification would make a finding *about* that specification unreviewable. It is narrow by design.
+
+**Direct escalation reports the evidence and the unresolved disagreement only.** It does not authorize the Reviewer to change product behavior, specifications, ADRs, architecture, acceptance criteria, or milestone status, and it does not make the finding an approved decision. Maya decides. Escalation must be explicit — the Reviewer must state that it is escalating and which of the three conditions applies. Non-material findings and ordinary implementation defects never take this path.
 
 ---
 
