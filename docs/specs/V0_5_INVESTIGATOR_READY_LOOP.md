@@ -99,6 +99,10 @@ One durable operation permits one model generation call. Availability/model pref
 
 `llama3:8b` is not a required qualified V0.5 baseline. It may remain configurable, but acceptance must record a local model, version, settings, and prompt configuration that pass representative INITIAL, MODIFY, and DECLINE/redirect semantic scenarios. Repeated inadequate directions or unresponsive decision flows fail manual acceptance; model qualification is not treated as deterministic semantic proof.
 
+**Required observation counts for a candidate configuration.** Acceptance evidence for a candidate configuration uses asymmetric repetition, and the counts apply **per semantic scenario** — INITIAL, MODIFY and DECLINE/redirect each carry the full count: **10 runs per scenario for structural validity** (30 in total), reported by machine as counts and failure categories; and **3 runs per scenario for semantic adequacy** (nine plans in total), every one of which is presented in full and must be judged adequate by the Product Owner before the configuration can be presented for semantic acceptance. A single inadequate run in any scenario withholds the whole configuration; there is no per-scenario partial pass. A single adequate or inadequate observation neither qualifies nor disqualifies a configuration.
+
+**N=3 per scenario is a screening gate against gross instability. It is not a statistical reliability guarantee.** Three adequate runs out of three bound the true failure rate only loosely and do not establish a reliability rate; no acceptance record may describe them as doing so, and the nine-run total must not be pooled into a stronger confidence claim. The counts and their rationale are recorded in `docs/specs/V0_5_ACCEPTANCE_OPERATING_MODEL.md` §2.1.
+
 ## InvestigationDirection
 
 `InvestigationDirection` is a lightweight, persisted, versioned snapshot for investigation continuity, Resume, and minimal provenance. It contains:
@@ -199,10 +203,10 @@ V0.5 is complete only when all of these are demonstrated:
 1. Investigations can be started and resumed without UUIDs or package paths.
 2. Safe package loading preserves evaluator/private isolation and governed initial context.
 3. The investigator can keep, edit, replace, or remove the suggested objective.
-4. Automated verification confirms at least two non-blank competing-explanation entries, at least two non-blank ordered plan steps, and exactly one five-field proposal without imposing a fixed stage taxonomy. Manual acceptance confirms that the qualified model configuration produces meaningful competing explanations, a genuine multi-step provisional plan, and a proposed action narrower than the direction in representative scenarios; the review UI presents the objective and generated content together for investigator judgment.
+4. Automated verification confirms at least two non-blank competing-explanation entries, at least two non-blank ordered plan steps, and exactly one five-field proposal without imposing a fixed stage taxonomy, observed over **10 structural runs of this scenario** for the candidate configuration. Manual acceptance confirms that the qualified model configuration produces meaningful competing explanations, a genuine multi-step provisional plan, and a proposed action narrower than the direction in representative scenarios, across **3 semantic runs of this scenario, all of which the Product Owner judges adequate**; the review UI presents the objective and generated content together for investigator judgment. The 3-run-per-scenario semantic requirement is a screening gate against gross instability, not a statistical reliability guarantee.
 5. Approve persists and presents the exact approved action without execution.
-6. Modify persists its instruction and modified original before generation; structurally valid success produces a revision-lineage proposal and requires fresh review with the instruction and generated result shown together, while failure leaves no revision and presents Attention. Manual acceptance confirms materially responsive Modify behavior for the qualified model configuration; runtime semantic adequacy remains an investigator judgment.
-7. Decline commits permanently before reconsideration; structurally valid success can redirect direction and creates an independent fresh proposal shown with the persisted guidance for fresh review. Manual acceptance confirms that the qualified model configuration materially accounts for representative redirection guidance; runtime semantic adequacy remains an investigator judgment.
+6. Modify persists its instruction and modified original before generation; structurally valid success produces a revision-lineage proposal and requires fresh review with the instruction and generated result shown together, while failure leaves no revision and presents Attention. Manual acceptance confirms materially responsive Modify behavior for the qualified model configuration across **3 semantic runs of this scenario, all of which the Product Owner judges adequate**, alongside **10 structural runs of this scenario**; runtime semantic adequacy remains an investigator judgment. The 3-run-per-scenario semantic requirement is a screening gate against gross instability, not a statistical reliability guarantee.
+7. Decline commits permanently before reconsideration; structurally valid success can redirect direction and creates an independent fresh proposal shown with the persisted guidance for fresh review. Manual acceptance confirms that the qualified model configuration materially accounts for representative redirection guidance across **3 semantic runs of this scenario, all of which the Product Owner judges adequate**, alongside **10 structural runs of this scenario**; runtime semantic adequacy remains an investigator judgment. The 3-run-per-scenario semantic requirement is a screening gate against gross instability, not a statistical reliability guarantee.
 8. Resume reconstructs lifecycle state, current direction, outstanding/approved action, and history.
 9. Ollama preflight reports unavailable service/model as Attention without substitution.
 10. Working renders before model dispatch; slow local inference remains visibly Agent working rather than a false failure.
@@ -232,3 +236,19 @@ At minimum, the automated coverage demonstrates:
 - **REFRESH / DUPLICATE ACKNOWLEDGEMENT:** repeated render acknowledgements cannot dispatch twice; refresh while `PENDING_RENDER` remains safe; and refresh while `RUNNING` cannot dispatch again;
 - **NAVIGATION:** Back to Investigations does not cancel `PENDING_RENDER`, and Resume reconstructs the correct Working state; and
 - **FINAL PROJECTION:** after successful delayed model generation, the resulting authoritative state is visibly rendered without requiring application restart.
+
+### Required real-browser journey set
+
+In-process lifecycle tests remain the primary deterministic gate and are not replaced. They cannot observe behavior that only exists when a real browser drives a real running Streamlit server, and both open deterministic findings are of exactly that kind.
+
+V0.5 deterministic acceptance therefore additionally requires a **minimal real-browser journey set**, covering only the real-browser behaviors in-process tests cannot prove and that have already failed:
+
+- completion refresh after Back and Resume, for **START** and for **DECLINE**;
+- Working rendered before model dispatch;
+- transport-disconnect classification (an interrupted model connection must not be recorded as a persistence failure);
+- refresh while `PENDING_RENDER` and refresh while `RUNNING`;
+- interrupted-operation recovery.
+
+Remaining browser journeys are built afterwards as regression coverage and **do not gate V0.5 acceptance**.
+
+These journeys run against a harness-controlled fake model transport configured through the existing `OLLAMA_*` deployment configuration, with an isolated server and database per scenario. This is test infrastructure only: it introduces no product change and no new product dependency. The validation architecture, verdict definitions (PASS / FAIL / BLOCKED), and evidence requirements are specified in `docs/specs/V0_5_ACCEPTANCE_OPERATING_MODEL.md`.

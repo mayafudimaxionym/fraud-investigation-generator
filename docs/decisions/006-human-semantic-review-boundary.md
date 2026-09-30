@@ -30,6 +30,12 @@ A structurally valid but substantively weak response becomes authoritative gener
 
 `llama3:8b` is not a required qualified V0.5 deployment baseline. It may remain configurable, but V0.5 acceptance must record and use a local model, version, settings, and prompt configuration that pass the approved manual semantic scenarios. A configuration that repeatedly produces inadequate directions or unresponsive Modify/Decline results cannot pass V0.5 acceptance. Model qualification improves expected quality but is not deterministic semantic proof.
 
+Qualification uses asymmetric repetition. Structural validity is observed over **10 runs** for a candidate configuration and reported by machine as counts and failure categories. Semantic adequacy is observed over **3 runs**, each presented in full, and the configuration may be put forward for semantic acceptance only if the human judges **every** one of those runs adequate. A single observation neither qualifies nor disqualifies a configuration.
+
+**The 3-run semantic requirement is a screening gate against gross instability. It is not a statistical reliability guarantee.** Three adequate runs out of three bound the true failure rate only loosely; they do not establish a reliability rate, and no acceptance record, report, or experiment summary may present them as doing so. This qualification does not weaken the preceding paragraphs: semantic adequacy remains a human judgment, and repetition supplies evidence for that judgment rather than substituting for it.
+
+The counts apply **per semantic scenario** within a candidate configuration: 3 semantic runs of each of INITIAL, MODIFY and DECLINE/redirect — nine plans, every one read in full, all nine required to be adequate. The nine-run total must not be pooled into a stronger confidence claim; the gate is three-of-three within each scenario. The counts and their rationale are recorded in `docs/specs/V0_5_ACCEPTANCE_OPERATING_MODEL.md` §2.1.
+
 ## Reason
 
 Arbitrary natural-language responsiveness, contradiction, negation, incidental keyword reuse, semantic equivalence, and action narrowness cannot be established reliably through deterministic lexical rules. Such rules both accept contradictory responses and reject valid changes. Treating those heuristics as semantic proof creates false assurance and prevents normal investigator workflows from succeeding.
