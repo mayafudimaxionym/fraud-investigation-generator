@@ -110,4 +110,3 @@ class FakeOllama:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=5)
-
