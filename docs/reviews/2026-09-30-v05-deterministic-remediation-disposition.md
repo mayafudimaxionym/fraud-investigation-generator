@@ -11,11 +11,21 @@
 
 | # | Finding | Disposition | Owner |
 |---|---|---|---|
-| F1 | `PERSISTENCE_ERROR` still reachable from a transport failure | **Accepted.** Defect. Semantics recorded in ADR 007 | Implementation, after ADR 007 approval |
+| F1 | `PERSISTENCE_ERROR` still reachable from a transport failure | **Accepted.** Defect. Proposed semantics in ADR 007, **which is not approved** | Product Owner — ADR 007 discussion. Implementation is not engaged |
 | F2 | No committed evidence that completion refresh after Back and Resume is fixed | **Accepted.** Already gated by approved spec; no new decision | QA Automation Developer |
-| F3 | A `RUNNING` operation orphaned inside its own process has no path to `INTERRUPTED`, and now reruns at 1 Hz forever | **Open — Product Owner decision required** | Product Owner |
+| F3 | A `RUNNING` operation orphaned inside its own process has no path to `INTERRUPTED`, and now reruns at 1 Hz forever | **Open — deferred by Product Owner decision** until the AXI-21 real-browser evidence is in | Product Owner, after AXI-21 |
 | F4 | `SERVICE_UNAVAILABLE` now covers two transport conditions | **Accepted as correct.** Recorded in ADR 007; no change required | Closed here |
 | F5 | Browser-driving test infrastructure in the unit suite, skippable, duplicated | **Accepted.** Playwright journey set is canonical | QA Automation Developer |
+
+## Product Owner decisions recorded 2026-09-30
+
+Two decisions were put to the Product Owner on AXI-17. Both were answered.
+
+**ADR 007 is not approved.** The Product Owner declined approval and asked to discuss the decision before it is settled. ADR 007 therefore states a proposal, not an approved rule. Nothing in it is in force, and **no implementation work on F1 is authorized**. The F1 defect itself is not in dispute — what is unsettled is which failure category an unattributed failure receives, which is precisely what ADR 007 decides. Until that discussion concludes, `PERSISTENCE_ERROR` remains reachable from a transport failure on `HEAD`, and the second open V0.5 deterministic acceptance finding stays open on that ground alone.
+
+**F3 is deferred, not dropped.** The Product Owner chose to decide it after the AXI-21 real-browser journey evidence is available, which matches the recommendation on AXI-17: the START and DECLINE completion-refresh journeys drive precisely the condition F3 describes, so AXI-21 reports the resulting `agent_operations.status` and `failure_category` as diagnostic evidence for this decision. F3 is not an Implementation item and must not be picked up as one.
+
+Neither decision changes the standing conclusion above. Neither open V0.5 deterministic finding is closed, and nothing is recorded as acceptance-verified.
 
 ## F1 — accepted as a defect; the fix direction was already determined
 

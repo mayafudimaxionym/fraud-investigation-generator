@@ -1,6 +1,6 @@
 # ADR 007: Durable Operation Failure Classification Boundary
 
-**Status:** Proposed. Awaiting Product Owner approval. Raised by the AXI-17 independent review of `a3bff81`.
+**Status:** Proposed — **not approved**. The Product Owner declined approval on 2026-09-30 and asked to discuss the decision first; that discussion is open on Paperclip AXI-17. This ADR is **not in force**: Implementation must not act on it, and no code change may be made against it until it is approved and this status line says so. Raised by the AXI-17 independent review of `a3bff81`.
 
 ## Decision
 
