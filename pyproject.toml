@@ -10,7 +10,10 @@ requires-python = ">=3.11"
 dependencies = ["streamlit"]
 
 [project.optional-dependencies]
-test = ["pytest", "websockets"]
+test = ["pytest", "websockets", "playwright", "pytest-playwright"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "real_browser: runs a real browser against a live Streamlit server",
+]
