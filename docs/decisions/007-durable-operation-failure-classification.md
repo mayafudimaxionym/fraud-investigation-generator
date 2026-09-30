@@ -1,6 +1,6 @@
 # ADR 007: Durable Operation Failure Classification Boundary
 
-**Status:** Proposed — **not approved**. The Product Owner declined approval on 2026-09-30 and asked to discuss the decision first; that discussion is open on Paperclip AXI-17. This ADR is **not in force**: Implementation must not act on it, and no code change may be made against it until it is approved and this status line says so. Raised by the AXI-17 independent review of `a3bff81`.
+**Status:** Proposed — **not approved**. The Product Owner declined the original proposal on 2026-09-30, then recorded the revisions incorporated below. This complete revision is awaiting explicit Product Owner approval on Paperclip AXI-17. This ADR is **not in force**: Implementation must not act on it, and no code change may be made against it until it is approved and this status line says so. Raised by the AXI-17 independent review of `a3bff81`.
 
 ## Decision
 
@@ -8,11 +8,11 @@ A persisted safe failure category is a claim about what happened to the investig
 
 **1. `PERSISTENCE_ERROR` is reserved for a failed durable write.** It asserts that a generated result or an operation completion did not commit to the database. It must not carry any other failure. The step that performs the atomic durable commit classifies its own failures as `PERSISTENCE_ERROR`, because that is the only boundary that knows a write was attempted and did not succeed.
 
-**2. An unclassified failure is `UNKNOWN_FAILURE`.** The outer durable-operation boundary must not assume a cause for an exception it did not classify. Where it cannot attribute a failure to a named category it records `UNKNOWN_FAILURE`, whose investigator presentation is already approved: *"The agent request ended with an unknown safe failure category."* No new category is introduced; `UNKNOWN_FAILURE` is already in `AGENT_OPERATION_FAILURE_CATEGORIES` and already has approved investigator copy.
+**2. An unclassified failure is `UNKNOWN_FAILURE`.** The outer durable-operation boundary must not assume a cause for an exception it did not classify. Where it cannot attribute a failure to a named category it records `UNKNOWN_FAILURE`. The investigator presentation is: *"The request could not be completed, and the reason could not be identified."* This deliberately replaces the existing jargon-heavy copy while preserving the existing category. No new category is introduced; `UNKNOWN_FAILURE` is already in `AGENT_OPERATION_FAILURE_CATEGORIES`.
 
 **Transport failures are classified by exception family, not by a closed list of named types.** A transport failure is any failure of the model request/response cycle that surfaces as an `OSError` — which includes `urllib.error.URLError`, `ConnectionError`, `ssl.SSLError`, and a bare socket `OSError` — or as an `http.client.HTTPException`. Enumerating individual transport exception types is not sufficient, because any type outside the enumeration escapes untranslated and is then mislabelled by the outer boundary. Timeout and HTTP-status classification continue to take precedence over the transport family, as they do today.
 
-**A transport failure reaching or reading from the local model service is `SERVICE_UNAVAILABLE`.** One category covers both "the service could not be reached" and "the connection was interrupted mid-generation". `docs/ARCHITECTURE.md` requires categories sufficient to distinguish failures *where recovery differs*; recovery for both is identical — the request has terminated, persisted state is authoritative, and explicit **Try again** creates a new operation identity. The investigator copy states both conditions: *"The local model service is unavailable or its connection was interrupted."*
+**A transport failure reaching or reading from the local model service is `SERVICE_UNAVAILABLE`.** One category covers both "the service could not be reached" and "the connection was interrupted mid-generation". `docs/ARCHITECTURE.md` requires categories sufficient to distinguish failures *where recovery differs*; recovery for both is identical — the request has terminated, persisted state is authoritative, and explicit **Try again** creates a new operation identity. The investigator copy states both conditions and gives the common recovery hint: *"The local model service is unavailable or its connection was interrupted. Check that the local model service is running, then try again."*
 
 **Unchanged by this decision:** one generation call per durable operation; no invisible retry; durable-operation dispatch and the atomic single claim; internal exception text is never investigator-visible.
 
@@ -34,10 +34,13 @@ Classifying transport failures by family rather than by name makes the classific
 
 Keeping one `SERVICE_UNAVAILABLE` category for both transport conditions avoids adding an unapproved category for a distinction the investigator cannot act on differently. It is a deliberate application of the "where recovery differs" test rather than a gap.
 
+The two revised messages separate cause from consequence. The surrounding Attention presentation continues to state what happened to the investigator's work and whether anything was authorized. The category message explains the known cause, or honestly states that the cause is unknown; it does not speculate that generated work was lost.
+
 ## Consequences
 
 - A store-write failure must still produce `PERSISTENCE_ERROR`. Existing coverage for the legitimate `PERSISTENCE_ERROR` path must continue to pass and must not be relaxed to `UNKNOWN_FAILURE`.
 - Coverage must include at least one transport exception type that is an `OSError` but is not one of the three types `a3bff81` enumerated, asserted end to end through the persisted `failure_category` rather than only at the client boundary.
+- Investigator-facing coverage must assert the revised `UNKNOWN_FAILURE` and `SERVICE_UNAVAILABLE` messages and must continue to prevent raw internal exception text, service URLs, host details, and runner details from reaching the UI.
 - This decision does not authorize broadening any handler to bare `Exception`. It constrains which category an unattributed failure receives, not how widely exceptions are caught.
 - `investigation/models.py` is unchanged; no category is added or removed.
 
