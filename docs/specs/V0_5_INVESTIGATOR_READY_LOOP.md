@@ -196,6 +196,16 @@ V0.5 must not add:
 - full LLM conversation persistence as investigation state; or
 - V1 controlled analytical execution.
 
+### Named exclusion: same-process stalled `RUNNING` operations
+
+**V0.5 does not detect a `RUNNING` operation whose claiming work has died while the Streamlit process itself survives.** This is a deliberate exclusion decided by the Product Owner on 2026-09-30, not an oversight, and it must not be treated as a defect against V0.5.
+
+`INTERRUPTED` is scoped to ambiguous **prior-process** work, as `docs/ARCHITECTURE.md` states. Recovery from it is confirmed working by the committed real-browser gate: an operation left `RUNNING` by a dead process is swept to `INTERRUPTED`, requires Attention, and is only re-attempted on an explicit linked retry.
+
+The excluded case is narrower: the process survives, so the sweep never runs, and the operation stays `RUNNING` and projects **Agent Working** with no Attention state. **Back** remains an escape. The condition has never been observed, no journey exercises it, and the escalated theory that the one-second completion refresh could itself cause it was tested and disproved by the gate — held operations complete normally with the refresh active.
+
+Adding a duration-based transition to `INTERRUPTED` would be new visible product behavior requiring a threshold judgement, and is deferred. It is a V0.6 candidate, not a V0.5 acceptance item.
+
 ## Acceptance boundary
 
 V0.5 is complete only when all of these are demonstrated:

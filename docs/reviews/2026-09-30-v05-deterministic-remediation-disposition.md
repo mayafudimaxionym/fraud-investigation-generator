@@ -13,7 +13,7 @@
 |---|---|---|---|
 | F1 | `PERSISTENCE_ERROR` still reachable from a transport failure | **Accepted.** Defect. Proposed semantics in ADR 007, **which is not approved** | Product Owner — ADR 007 discussion. Implementation is not engaged |
 | F2 | No committed evidence that completion refresh after Back and Resume is fixed | **Accepted.** Already gated by approved spec; no new decision. Journey set now committed; the Back/Resume journeys do not yet hold the operation `RUNNING` across the boundary | QA Automation Developer |
-| F3 | A `RUNNING` operation orphaned inside its own process has no path to `INTERRUPTED` | **Open — Product Owner decision, evidence now available.** The Planner’s 1 Hz thread-cancellation escalation is disproved and withdrawn | Product Owner |
+| F3 | A `RUNNING` operation orphaned inside its own process has no path to `INTERRUPTED` | **Closed by Product Owner decision 2026-09-30:** recorded as a named V0.5 exclusion, not a defect. The Planner’s 1 Hz thread-cancellation escalation is disproved and withdrawn | Closed |
 | F4 | `SERVICE_UNAVAILABLE` now covers two transport conditions | **Accepted as correct.** Recorded in ADR 007; no change required | Closed here |
 | F5 | Browser-driving test infrastructure in the unit suite, skippable, duplicated | **Accepted and closed.** Playwright journey set is canonical and committed; the duplicate raw-CDP test is removed | Closed |
 
@@ -102,3 +102,11 @@ F3 therefore reverts to exactly the scope the Independent Reviewer gave it: a `R
 ### F5 — closed
 
 The duplicate raw-CDP browser test was removed from `tests/test_streamlit_app.py` in `52f4fc7`. One canonical real-browser mechanism now exists, the journey set is in version control, and the "spec-required gate is untracked" condition recorded above no longer holds.
+
+## F3 resolved by Product Owner decision, 2026-09-30
+
+Presented with the real-browser evidence, the Product Owner chose to **record the same-process stalled `RUNNING` case as a known V0.5 limitation and an explicit non-goal**, rather than add a duration-based transition to `INTERRUPTED` now or commission a further targeted journey.
+
+This is recorded in `docs/specs/V0_5_INVESTIGATOR_READY_LOOP.md` under **Scope boundaries → Named exclusion: same-process stalled `RUNNING` operations**, so it is a deliberate exclusion in the canonical specification rather than a decision living only in issue history. It must not be raised again as a V0.5 defect. It is a V0.6 candidate.
+
+F3 is closed. The open V0.5 deterministic findings remain the two original ones, and neither is closed.
