@@ -12,10 +12,10 @@
 | # | Finding | Disposition | Owner |
 |---|---|---|---|
 | F1 | `PERSISTENCE_ERROR` still reachable from a transport failure | **Accepted.** Defect. Proposed semantics in ADR 007, **which is not approved** | Product Owner — ADR 007 discussion. Implementation is not engaged |
-| F2 | No committed evidence that completion refresh after Back and Resume is fixed | **Accepted.** Already gated by approved spec; no new decision | QA Automation Developer |
-| F3 | A `RUNNING` operation orphaned inside its own process has no path to `INTERRUPTED`, and now reruns at 1 Hz forever | **Open — deferred by Product Owner decision** until the AXI-21 real-browser evidence is in | Product Owner, after AXI-21 |
+| F2 | No committed evidence that completion refresh after Back and Resume is fixed | **Accepted.** Already gated by approved spec; no new decision. Journey set now committed; the Back/Resume journeys do not yet hold the operation `RUNNING` across the boundary | QA Automation Developer |
+| F3 | A `RUNNING` operation orphaned inside its own process has no path to `INTERRUPTED` | **Open — Product Owner decision, evidence now available.** The Planner’s 1 Hz thread-cancellation escalation is disproved and withdrawn | Product Owner |
 | F4 | `SERVICE_UNAVAILABLE` now covers two transport conditions | **Accepted as correct.** Recorded in ADR 007; no change required | Closed here |
-| F5 | Browser-driving test infrastructure in the unit suite, skippable, duplicated | **Accepted.** Playwright journey set is canonical | QA Automation Developer |
+| F5 | Browser-driving test infrastructure in the unit suite, skippable, duplicated | **Accepted and closed.** Playwright journey set is canonical and committed; the duplicate raw-CDP test is removed | Closed |
 
 ## Product Owner decisions recorded 2026-09-30
 
@@ -71,4 +71,34 @@ The review confirmed, and this disposition accepts, that `a3bff81` leaves unchan
 
 ## Known stale state
 
-`PROJECT_STATUS.md` "Current uncommitted work" describes the remediations as uncommitted. They are committed. The genuinely uncommitted work is `tests/browser/` and the `pyproject.toml` test-extra change.
+`PROJECT_STATUS.md` "Current uncommitted work" describes the remediations as uncommitted. They are committed. The `tests/browser/` journey set and the `pyproject.toml` test-extra change were also uncommitted when this disposition was first written; they were committed in `52f4fc7` and `38f3c88`.
+
+## Real-browser gate evidence, recorded 2026-09-30 (AXI-21)
+
+The canonical Playwright journey set is now committed (`52f4fc7`, `38f3c88`) and was run against product `HEAD` `ab8e678`. This is the evidence the approved spec requires, and the Product Owner deferred the F3 decision until it existed. It is diagnostic evidence only; no acceptance verdict is issued here and neither deterministic finding is recorded as closed.
+
+Results: five journeys PASS, one FAILS.
+
+### Finding 2 (transport disconnect) — confirmed still open, now permanently gated
+
+`test_transport_disconnect_is_not_persistence_failure` FAILS against `HEAD`. `tests/browser/injected_streamlit.py` raises a bare `OSError` from the generation request — precisely the unclassified transport failure the review identified, outside the three exception types `a3bff81` enumerates. The persisted row is `START / FAILED / PERSISTENCE_ERROR`, and the investigator is told their work may not have been saved.
+
+This is the review's F1 reproduced end to end, through a real browser, against the real service and store. It removes any remaining doubt: **finding 2 is open, and the committed journey will keep failing until it is fixed.** The fix direction is ADR 007, which is not approved and is not in force.
+
+### Finding 1 (completion refresh) — materially advanced, not yet closable as specified
+
+What is genuinely demonstrated, for START: `test_working_precedes_dispatch_and_refresh_is_safe` holds the model response so the operation is durably `RUNNING`, reloads, resumes, confirms the Working screen and exactly one dispatch, confirms one refresh interval is active, then releases and confirms the completed proposal becomes visible **without a restart** and the interval is cleared (`created=1`, `cleared=1`, `active=0`). That is the defect condition, and it passes. The one-generation-call-per-durable-operation contract holds throughout.
+
+What is not yet demonstrated: the approved spec requires *completion refresh after Back and Resume, for START and for DECLINE*. In both journeys named for that clause, `_initial_proposal` waits for the **Needs Review** heading before clicking **Back to Investigations**. The operation is therefore already `COMPLETED` at the Back boundary, and Resume re-renders it from persisted state without the refresh mechanism being involved. Neither journey holds the response across Back and Resume, and `DECLINE` has no coverage at all of a delayed result arriving across a navigation boundary.
+
+The gap is in the journey construction, not in the product and not in the approved requirement. `FakeOllama.hold()` / `release()` already exist and are used elsewhere in the same module, so closing it is a narrow change to two existing journeys. Owner: QA Automation Developer. This is an application of already-approved acceptance criteria, not a new gate.
+
+### F3 — the Planner's severity escalation is disproved; the reviewer's narrow case stands
+
+The disposition above escalated F3 on the theory that a 1 Hz rerun of the session executing the generation could cancel the claiming script thread, converting a rare stall into a routine one. **The evidence contradicts that.** The Working journey holds an operation `RUNNING` with the refresh interval confirmed active, and both completion journeys persist `COMPLETED` with `failure_category` null. The 1 Hz refresh did not cancel the claiming thread or strand any operation. The escalation is withdrawn and should not be re-raised without new evidence.
+
+F3 therefore reverts to exactly the scope the Independent Reviewer gave it: a `RUNNING` operation whose claiming thread dies while the Streamlit process survives is never swept to `INTERRUPTED`. No journey exercises that condition, and `docs/ARCHITECTURE.md` scopes `INTERRUPTED` to prior-process work, so it may be a deliberate exclusion. `test_interrupted_operation_requires_explicit_retry` confirms the prior-process path itself works correctly: `INTERRUPTED`, then an explicit linked retry to `COMPLETED`, with no implicit regeneration.
+
+### F5 — closed
+
+The duplicate raw-CDP browser test was removed from `tests/test_streamlit_app.py` in `52f4fc7`. One canonical real-browser mechanism now exists, the journey set is in version control, and the "spec-required gate is untracked" condition recorded above no longer holds.
