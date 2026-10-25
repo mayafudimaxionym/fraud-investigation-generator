@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paperclip-company-quota-state-v1",
+  "title": "Paperclip company provider quota state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "companyId", "configurationVersion", "generatedAt", "providers"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "companyId": { "type": ["string", "null"] },
+    "configurationVersion": { "type": ["string", "null"] },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anthropic", "openai", "ollama"],
+      "properties": {
+        "anthropic": { "$ref": "#/$defs/provider" },
+        "openai": { "$ref": "#/$defs/provider" },
+        "ollama": { "$ref": "#/$defs/provider" }
+      }
+    }
+  },
+  "$defs": {
+    "consumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runId": { "type": ["string", "null"] },
+        "agentId": { "type": ["string", "null"] },
+        "agentName": { "type": ["string", "null"] },
+        "status": { "enum": ["queued", "running", null] }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "metric", "observedValue", "effectiveValue", "amberAtOrAbove", "redAtOrAbove", "reserve", "concurrencyAdjustment", "state", "determinesProviderState"],
+      "properties": {
+        "id": { "type": "string" },
+        "metric": { "type": "string" },
+        "observedValue": { "type": "number" },
+        "effectiveValue": { "type": "number" },
+        "resetsAt": { "type": ["string", "number", "null"] },
+        "windowDurationMins": { "type": ["number", "null"] },
+        "amberAtOrAbove": { "type": "number" },
+        "redAtOrAbove": { "type": "number" },
+        "reserve": { "type": "number" },
+        "concurrencyAdjustment": { "type": "number" },
+        "state": { "enum": ["GREEN", "AMBER", "RED"] },
+        "determinesProviderState": { "type": "boolean" }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["applicable", "health", "state"],
+      "properties": {
+        "applicable": { "type": ["boolean", "null"] },
+        "poolId": { "type": ["string", "null"] },
+        "observedAt": { "type": ["string", "null"], "format": "date-time" },
+        "health": { "enum": ["FRESH", "UNAVAILABLE", "STALE", "MALFORMED", "CONFIGURATION_INCOMPLETE", "EXCLUDED"] },
+        "state": { "enum": ["GREEN", "AMBER", "RED", "UNKNOWN", "EXCLUDED"] },
+        "signal": {
+          "type": ["object", "null"],
+          "properties": {
+            "sourceKind": { "type": "string" },
+            "windows": { "type": "array", "items": { "$ref": "#/$defs/window" } }
+          }
+        },
+        "activeConsumers": { "type": "array", "items": { "$ref": "#/$defs/consumer" } },
+        "error": {
+          "description": "Why this probe produced no usable snapshot. `diagnostic` holds bounded structural evidence only: shape names rather than values, with every free-text field redacted and then truncated. It is never a capacity input and never carries the raw provider response, credentials, or authentication material.",
+          "type": ["object", "null"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" },
+            "fields": { "type": "array", "items": { "type": "string" } },
+            "diagnostic": {
+              "type": ["object", "null"],
+              "properties": {
+                "rateLimitsAvailable": { "type": ["boolean", "number", "string", "null"] },
+                "rateLimitsKind": { "enum": ["null", "boolean", "object", "array", "string", "number", "absent", "invalid"] },
+                "planWindows": { "type": "object", "additionalProperties": { "type": "string" } },
+                "planWindowUtilization": { "type": "object", "additionalProperties": { "type": "string" } },
+                "jsonLines": { "type": "integer" },
+                "controlResponses": { "type": "integer" },
+                "controlResponseSubtypes": { "type": "array", "maxItems": 20, "items": { "type": ["string", "null"] } },
+                "failureClassification": { "type": ["string", "null"], "maxLength": 214 },
+                "successResponseKind": { "type": "string" },
+                "exitCode": { "type": ["integer", "null"] },
+                "stderr": { "type": ["string", "null"], "maxLength": 1038 },
+                "failureClass": { "type": "string" },
+                "errno": { "type": ["integer", "null"] }
+              }
+            }
+          }
+        },
+        "telemetry": {
+          "description": "Policy v1.1 trustworthiness record. `health`/`probedAt` describe the most recent probe attempt; the `lastTrustworthy*` fields retain the reading that active-work decisions follow until it ages past monitoring.staleAfterSeconds.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["probedAt", "health", "lastTrustworthyAt", "lastTrustworthyState", "lastTrustworthyCausingWindows"],
+          "properties": {
+            "probedAt": { "type": ["string", "null"], "format": "date-time" },
+            "health": { "enum": ["FRESH", "UNAVAILABLE", "STALE", "MALFORMED", "CONFIGURATION_INCOMPLETE", "EXCLUDED"] },
+            "lastTrustworthyAt": { "type": ["string", "null"], "format": "date-time" },
+            "lastTrustworthyState": { "enum": ["GREEN", "AMBER", "RED", null] },
+            "lastTrustworthyCausingWindows": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

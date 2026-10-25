@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paperclip-quota-continuation-checkpoint-v1",
+  "title": "Deterministic quota-pause continuation checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "checkpointId", "interruption", "pause", "sourceTask",
+    "sourceRun", "completedWork", "observedContinuation", "nextWork",
+    "workspaceChanges", "evidenceReferences", "requiresProviderInference",
+    "automaticResumeRequested"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "checkpointId": { "type": "string", "minLength": 1 },
+    "interruption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskId", "runId", "agentId", "provider", "poolId", "quotaState", "stateReason", "causingWindows", "recordedAt"],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1 },
+        "runId": { "type": "string", "minLength": 1 },
+        "agentId": { "type": "string", "minLength": 1 },
+        "provider": { "enum": ["anthropic", "openai"] },
+        "poolId": { "type": "string", "minLength": 1 },
+        "quotaState": { "enum": ["AMBER", "RED", "UNKNOWN"] },
+        "stateReason": { "type": "string", "minLength": 1 },
+        "causingWindows": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "recordedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "pause": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "receipt", "evidenceRef"],
+      "properties": {
+        "status": { "enum": ["confirmed", "pause_unconfirmed"] },
+        "receipt": { "type": ["object", "null"] },
+        "evidenceRef": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sourceTask": { "$ref": "#/$defs/sourceTask" },
+    "sourceRun": { "$ref": "#/$defs/sourceRun" },
+    "completedWork": { "$ref": "#/$defs/knowledge" },
+    "observedContinuation": { "type": "object" },
+    "nextWork": { "$ref": "#/$defs/unknown" },
+    "workspaceChanges": { "$ref": "#/$defs/unknown" },
+    "evidenceReferences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "ref"],
+        "properties": {
+          "kind": { "type": "string", "minLength": 1 },
+          "ref": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "requiresProviderInference": { "const": false },
+    "automaticResumeRequested": { "const": false }
+  },
+  "$defs": {
+    "sourceTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identifier", "title", "statusAtCollection", "projectId"],
+      "properties": {
+        "identifier": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "statusAtCollection": { "type": ["string", "null"] },
+        "projectId": { "type": ["string", "null"] }
+      }
+    },
+    "sourceRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statusAtCollection", "errorCode", "startedAt", "finishedAt"],
+      "properties": {
+        "statusAtCollection": { "type": ["string", "null"] },
+        "errorCode": { "type": ["string", "null"] },
+        "startedAt": { "type": ["string", "null"] },
+        "finishedAt": { "type": ["string", "null"] }
+      }
+    },
+    "knowledge": {
+      "type": "object",
+      "required": ["status", "items"],
+      "properties": {
+        "status": { "enum": ["evidence_supported", "unknown"] },
+        "items": { "type": "array" },
+        "reason": { "type": "string" }
+      }
+    },
+    "unknown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": { "const": "unknown" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

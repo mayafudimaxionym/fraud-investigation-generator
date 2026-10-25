@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "configurationVersion": "cloud-provider-quota-protection-v1.1",
+  "companyId": "e6b7cf59-43ee-4b47-82b0-d1a3ed33b26e",
+  "monitoring": {
+    "enabled": true,
+    "pollIntervalSeconds": 60,
+    "staleAfterSeconds": 180
+  },
+  "paperclip": {
+    "baseUrl": "http://127.0.0.1:3100",
+    "activeRunsPath": "/api/companies/{companyId}/live-runs?minCount=0&limit={limit}",
+    "activeRunsTimeoutSeconds": 10,
+    "activeRunsPageSize": 50
+  },
+  "providers": {
+    "anthropic": {
+      "applicable": true,
+      "poolId": "anthropic",
+      "adapterTypes": [
+        "claude_local"
+      ],
+      "source": {
+        "kind": "claude_stream_json_get_usage",
+        "command": "C:\\Users\\User\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
+        "profileDirectory": "C:\\Users\\User\\.claude",
+        "timeoutSeconds": 30
+      },
+      "launch": {
+        "acp": {
+          "command": "C:\\Program Files\\nodejs\\node.exe",
+          "module": "C:\\Users\\User\\AppData\\Local\\npm-cache\\_npx\\43414d9b790239bb\\node_modules\\@agentclientprotocol\\claude-agent-acp\\dist\\index.js"
+        }
+      },
+      "thresholds": {
+        "five_hour": {
+          "metric": "used_percent",
+          "amberAtOrAbove": 80,
+          "redAtOrAbove": 90,
+          "reserve": 0
+        },
+        "seven_day": {
+          "metric": "used_percent",
+          "amberAtOrAbove": 85,
+          "redAtOrAbove": 95,
+          "reserve": 0
+        }
+      },
+      "concurrency": {
+        "enabled": true,
+        "strategy": "add_to_observed_metric",
+        "adjustmentPerAdditionalConsumer": 5
+      }
+    },
+    "openai": {
+      "applicable": true,
+      "poolId": "openai",
+      "adapterTypes": [
+        "codex_local"
+      ],
+      "source": {
+        "kind": "codex_app_server_rate_limits",
+        "command": "C:\\Users\\User\\AppData\\Local\\npm-cache\\_npx\\43414d9b790239bb\\node_modules\\.bin\\codex.cmd",
+        "profileDirectory": "C:\\Users\\User\\.codex",
+        "timeoutSeconds": 30
+      },
+      "launch": {
+        "acp": {
+          "command": "C:\\Program Files\\nodejs\\node.exe",
+          "module": "C:\\Users\\User\\AppData\\Local\\npm-cache\\_npx\\43414d9b790239bb\\node_modules\\@agentclientprotocol\\codex-acp\\dist\\index.js"
+        }
+      },
+      "thresholds": {
+        "primary": {
+          "metric": "used_percent",
+          "amberAtOrAbove": 80,
+          "redAtOrAbove": 90,
+          "reserve": 0
+        },
+        "secondary": {
+          "metric": "used_percent",
+          "amberAtOrAbove": 85,
+          "redAtOrAbove": 95,
+          "reserve": 0
+        }
+      },
+      "concurrency": {
+        "enabled": true,
+        "strategy": "add_to_observed_metric",
+        "adjustmentPerAdditionalConsumer": 5
+      }
+    },
+    "ollama": {
+      "applicable": false,
+      "reason": "Local provider is explicitly outside cloud quota control."
+    }
+  },
+  "behaviors": {
+    "amber": {
+      "newWork": "defer",
+      "activeWork": "finish_current"
+    },
+    "red": {
+      "newWork": "deny",
+      "activeWork": "checkpoint_stop"
+    },
+    "unknown": {
+      "newWork": "deny",
+      "activeWork": "checkpoint_stop"
+    },
+    "telemetryFailure": {
+      "newWork": "deny",
+      "activeWork": "retain_last_trustworthy_reading"
+    }
+  },
+  "runtimeControl": {
+    "enabled": true,
+    "mechanism": "paperclip_agent_pause",
+    "pauseAgentPath": "/api/agents/{agentId}/pause",
+    "requestTimeoutSeconds": 15,
+    "actions": {
+      "amber": "none",
+      "red": "pause_agents",
+      "unknown": "pause_agents"
+    }
+  }
+}

@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paperclip-company-quota-policy-v1",
+  "title": "Paperclip company provider quota policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "configurationVersion", "companyId", "monitoring", "paperclip", "providers", "behaviors", "runtimeControl"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "configurationVersion": { "type": "string", "minLength": 1 },
+    "companyId": { "type": "string", "minLength": 1 },
+    "monitoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "pollIntervalSeconds", "staleAfterSeconds"],
+      "properties": {
+        "enabled": { "type": ["boolean", "null"] },
+        "pollIntervalSeconds": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "staleAfterSeconds": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+      }
+    },
+    "paperclip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseUrl", "activeRunsPath", "activeRunsTimeoutSeconds", "activeRunsPageSize"],
+      "properties": {
+        "baseUrl": { "type": ["string", "null"] },
+        "activeRunsPath": { "type": ["string", "null"] },
+        "activeRunsTimeoutSeconds": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "activeRunsPageSize": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anthropic", "openai", "ollama"],
+      "properties": {
+        "anthropic": { "$ref": "#/$defs/cloudProvider" },
+        "openai": { "$ref": "#/$defs/cloudProvider" },
+        "ollama": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applicable", "reason"],
+          "properties": {
+            "applicable": { "const": false },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "behaviors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amber", "red", "unknown", "telemetryFailure"],
+      "properties": {
+        "amber": {
+          "type": "object", "additionalProperties": false, "required": ["newWork", "activeWork"],
+          "properties": {
+            "newWork": { "enum": ["defer", "deny", null] },
+            "activeWork": { "enum": ["finish_current", "checkpoint_stop", null] }
+          }
+        },
+        "red": {
+          "type": "object", "additionalProperties": false, "required": ["newWork", "activeWork"],
+          "properties": {
+            "newWork": { "enum": ["deny", null] },
+            "activeWork": { "enum": ["checkpoint_stop", null] }
+          }
+        },
+        "unknown": {
+          "type": "object", "additionalProperties": false, "required": ["newWork", "activeWork"],
+          "properties": {
+            "newWork": { "const": "deny" },
+            "activeWork": { "const": "checkpoint_stop" }
+          }
+        },
+        "telemetryFailure": {
+          "description": "Policy v1.1: a failed or unavailable quota probe blocks new provider work immediately but does not by itself pause already-running work. Active work follows the last trustworthy reading until it ages past monitoring.staleAfterSeconds, at which point the provider becomes fail-closed UNKNOWN/STALE and the unknown behavior applies. This introduces no new threshold.",
+          "type": "object", "additionalProperties": false, "required": ["newWork", "activeWork"],
+          "properties": {
+            "newWork": { "const": "deny" },
+            "activeWork": { "const": "retain_last_trustworthy_reading" }
+          }
+        }
+      }
+    },
+    "runtimeControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "mechanism", "pauseAgentPath", "requestTimeoutSeconds", "actions"],
+      "properties": {
+        "enabled": { "type": ["boolean", "null"] },
+        "mechanism": { "enum": ["paperclip_agent_pause", null] },
+        "pauseAgentPath": { "type": ["string", "null"] },
+        "requestTimeoutSeconds": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "actions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amber", "red", "unknown"],
+          "properties": {
+            "amber": { "enum": ["none", "pause_agents", null] },
+            "red": { "enum": ["pause_agents", null] },
+            "unknown": { "enum": ["pause_agents", null] }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "windowThreshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric", "amberAtOrAbove", "redAtOrAbove", "reserve"],
+      "properties": {
+        "metric": { "type": ["string", "null"] },
+        "amberAtOrAbove": { "type": ["number", "null"] },
+        "redAtOrAbove": { "type": ["number", "null"] },
+        "reserve": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "cloudProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applicable", "poolId", "adapterTypes", "source", "thresholds", "concurrency"],
+      "properties": {
+        "applicable": { "type": ["boolean", "null"] },
+        "poolId": { "type": ["string", "null"] },
+        "adapterTypes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "command", "profileDirectory", "timeoutSeconds"],
+          "properties": {
+            "kind": { "enum": ["claude_stream_json_get_usage", "codex_app_server_rate_limits"] },
+            "command": { "type": ["string", "null"] },
+            "profileDirectory": { "type": ["string", "null"] },
+            "timeoutSeconds": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+          }
+        },
+        "launch": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "acp": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["command", "module"],
+              "properties": {
+                "command": { "type": ["string", "null"] },
+                "module": { "type": ["string", "null"] }
+              }
+            }
+          }
+        },
+        "thresholds": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/windowThreshold" }
+        },
+        "concurrency": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "strategy", "adjustmentPerAdditionalConsumer"],
+          "properties": {
+            "enabled": { "type": ["boolean", "null"] },
+            "strategy": { "enum": ["add_to_observed_metric", null] },
+            "adjustmentPerAdditionalConsumer": { "type": ["number", "null"], "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}

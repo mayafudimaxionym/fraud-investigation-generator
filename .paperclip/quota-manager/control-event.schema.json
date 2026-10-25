@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paperclip-quota-control-event-v1",
+  "title": "Paperclip quota-manager preventive-control event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "recordedAt",
+    "action",
+    "provider",
+    "poolId",
+    "quotaState",
+    "stateReason",
+    "causingWindows",
+    "agentId",
+    "agentName",
+    "runIds",
+    "requiresProviderInference",
+    "automaticResumeRequested",
+    "failureClassification",
+    "phase",
+    "outcome"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "companyId": { "type": "string", "minLength": 1 },
+    "eventId": { "type": "string", "minLength": 1 },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "action": { "const": "pause_agent" },
+    "provider": { "enum": ["anthropic", "openai"] },
+    "poolId": { "type": "string", "minLength": 1 },
+    "quotaState": { "enum": ["AMBER", "RED", "UNKNOWN"] },
+    "stateReason": { "type": "string", "minLength": 1 },
+    "causingWindows": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "agentId": { "type": "string", "minLength": 1 },
+    "agentName": { "type": ["string", "null"] },
+    "runIds": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "interruptedRuns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["taskId", "runId"],
+        "properties": {
+          "taskId": { "type": "string", "minLength": 1 },
+          "runId": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "checkpointUnresolvedRunIds": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "requiresProviderInference": { "const": false },
+    "automaticResumeRequested": { "const": false },
+    "failureClassification": { "const": "quota_manager_preventive_stop" },
+    "phase": { "enum": ["intent", "result"] },
+    "outcome": { "enum": ["pending", "paused", "failed"] },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agentId", "agentStatus"],
+      "properties": {
+        "agentId": { "type": "string", "minLength": 1 },
+        "agentStatus": { "const": "paused" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "type"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
