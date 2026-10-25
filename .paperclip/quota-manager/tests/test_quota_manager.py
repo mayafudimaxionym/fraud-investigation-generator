@@ -4,6 +4,7 @@ import datetime as dt
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -1447,6 +1448,346 @@ class FailedProbeDiagnosticTests(unittest.TestCase):
         })])
         self.assertNotIsInstance(outcome, qm.QuotaError)
         self.assertEqual([12.5, 3.0], [window["value"] for window in outcome["windows"]])
+
+
+def anthropic_only_failure(error: Exception, value: float = 1.0):
+    """Anthropic fails while OpenAI still succeeds, keeping provider separation visible."""
+    succeeding = succeeding_probe(value)
+
+    def result(provider, config):
+        if provider == "anthropic":
+            raise error
+        return succeeding(provider, config)
+
+    return result
+
+
+class ProbeOutcomeJournalTests(unittest.TestCase):
+    """AXI-68 R1/R3/R4. A probe outcome must outlive the state file that replaces it
+    every cycle, carry its own timing, and leave a per-cycle heartbeat — while
+    changing no threshold, no decision, and no durable record."""
+
+    def setUp(self):
+        self.now = dt.datetime(2030, 1, 1, tzinfo=dt.timezone.utc)
+        self.policy = complete_policy()  # monitoring.staleAfterSeconds = 120
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.journal_path = Path(self.directory.name) / qm.JOURNAL_FILENAME
+        self.rotated_path = self.journal_path.with_name(self.journal_path.name + ".1")
+        self.journal = qm.ProbeJournal(self.journal_path)
+
+    def observed(self, probe, now=None, previous=None, journal=Ellipsis):
+        with patch.object(qm, "fetch_active_consumers", return_value={"anthropic": [], "openai": []}), \
+             patch.object(qm, "run_probe", side_effect=probe):
+            return qm.observe(
+                self.policy, now or self.now, previous=previous,
+                journal=self.journal if journal is Ellipsis else journal,
+            )
+
+    def records(self, kind=None):
+        if not self.journal_path.is_file():
+            return []
+        lines = self.journal_path.read_text(encoding="utf-8").splitlines()
+        parsed = [json.loads(line) for line in lines if line]
+        return [item for item in parsed if kind is None or item["record"] == kind]
+
+    def probes(self, provider="anthropic"):
+        return [item for item in self.records(qm.JOURNAL_PROBE_RECORD) if item["provider"] == provider]
+
+    # --- R1: the outcome survives the state file that replaces it -------------
+
+    def test_a_failed_probe_appends_one_record_with_its_code_and_counters(self):
+        diagnosed = qm.QuotaError(
+            "CLAUDE_LIMITS_UNAVAILABLE", "Claude rate limits were not available",
+            diagnostic={"rateLimitsAvailable": True, "rateLimitsKind": "null", "stderr": None},
+        )
+        good = self.observed(succeeding_probe(1.0))
+        self.observed(anthropic_only_failure(diagnosed), self.now + dt.timedelta(seconds=63), previous=good)
+        failed = [item for item in self.probes() if item["health"] != "FRESH"]
+        self.assertEqual(1, len(failed), "a failed probe must append exactly one record")
+        record = failed[0]
+        self.assertEqual(("UNAVAILABLE", "UNKNOWN"), (record["health"], record["state"]))
+        self.assertEqual("CLAUDE_LIMITS_UNAVAILABLE", record["error"]["code"])
+        self.assertEqual("null", record["error"]["diagnostic"]["rateLimitsKind"])
+        self.assertIs(True, record["error"]["diagnostic"]["rateLimitsAvailable"])
+        self.assertEqual(1, record["consecutiveFailureCount"])
+        self.assertEqual(63.0, record["graceAgeSeconds"])
+        self.assertTrue(record["probeInvoked"])
+        # OpenAI probed in the same cycle and is recorded separately as healthy.
+        self.assertEqual(["FRESH"], [item["health"] for item in self.probes("openai")[-1:]])
+
+    def test_a_successful_probe_appends_a_fresh_record_with_no_error(self):
+        self.observed(succeeding_probe(1.0))
+        self.assertEqual(2, len(self.records(qm.JOURNAL_PROBE_RECORD)), "one record per applicable provider")
+        record = self.probes()[0]
+        self.assertEqual("FRESH", record["health"])
+        self.assertIsNone(record["error"])
+        self.assertEqual(0, record["consecutiveFailureCount"])
+        self.assertEqual(0.0, record["graceAgeSeconds"])
+
+    def test_the_journal_is_append_only_across_cycles(self):
+        """The D1 guard: `state.json` is overwritten each cycle, the journal is not."""
+        state = None
+        for step in range(3):
+            state = self.observed(succeeding_probe(1.0), self.now + dt.timedelta(seconds=63 * step), previous=state)
+        first = self.probes()[0]
+        self.assertEqual(3, len(self.probes()), "each cycle must add a record, not replace one")
+        self.assertEqual(3, len(self.probes("openai")))
+        self.assertEqual(qm.iso(self.now), first["observedAt"], "the earliest record must survive unchanged")
+        self.assertEqual(
+            [qm.iso(self.now + dt.timedelta(seconds=63 * step)) for step in range(3)],
+            [item["observedAt"] for item in self.probes()],
+        )
+
+    def test_the_consecutive_failure_count_increments_then_resets_on_recovery(self):
+        state = self.observed(succeeding_probe(1.0))
+        for step in (1, 2, 3):
+            state = self.observed(failing_probe, self.now + dt.timedelta(seconds=63 * step), previous=state)
+        self.observed(succeeding_probe(1.0), self.now + dt.timedelta(seconds=252), previous=state)
+        self.assertEqual([0, 1, 2, 3, 0], [item["consecutiveFailureCount"] for item in self.probes()])
+        self.assertEqual([0, 1, 2, 3, 0], [item["consecutiveFailureCount"] for item in self.probes("openai")])
+
+    def test_a_single_provider_failure_does_not_advance_the_other_count(self):
+        state = self.observed(succeeding_probe(1.0))
+        for step in (1, 2):
+            state = self.observed(
+                anthropic_only_failure(qm.QuotaError("FIXTURE_UNAVAILABLE", "fixture probe failed")),
+                self.now + dt.timedelta(seconds=63 * step), previous=state,
+            )
+        self.assertEqual([0, 1, 2], [item["consecutiveFailureCount"] for item in self.probes()])
+        self.assertEqual([0, 0, 0], [item["consecutiveFailureCount"] for item in self.probes("openai")])
+
+    # --- R3: probe start time and duration -----------------------------------
+
+    def test_probe_timing_separates_a_slow_failure_from_an_immediate_one(self):
+        # `CLOUD` is probed in order, so the fake clock is read anthropic-first.
+        clock = iter([0.0, 30.0, 30.0, 30.05])
+        with patch.object(qm.time, "perf_counter", lambda: next(clock)):
+            self.observed(anthropic_only_failure(qm.QuotaError("PROBE_TIMEOUT", "Provider probe timed out")))
+        slow, quick = self.probes()[0], self.probes("openai")[0]
+        self.assertEqual(30000.0, slow["probeDurationMs"], "a timeout must be visible as a long probe")
+        self.assertEqual(50.0, quick["probeDurationMs"])
+        self.assertEqual("PROBE_TIMEOUT", slow["error"]["code"])
+        self.assertEqual(qm.iso(self.now), slow["observedAt"])
+        self.assertIsNotNone(slow["probeStartedAt"])
+
+    def test_an_unprobed_provider_is_recorded_as_such_rather_than_as_a_fast_failure(self):
+        """A consumer-lookup failure fails the provider closed without probing it."""
+        with patch.object(qm, "fetch_active_consumers", side_effect=qm.QuotaError("ACTIVE_RUNS_UNAVAILABLE", "lookup failed")), \
+             patch.object(qm, "run_probe", succeeding_probe(1.0)):
+            qm.observe(self.policy, self.now, journal=self.journal)
+        record = self.probes()[0]
+        self.assertFalse(record["probeInvoked"])
+        self.assertIsNone(record["probeDurationMs"])
+        self.assertIsNone(record["probeStartedAt"])
+        self.assertEqual("ACTIVE_RUNS_UNAVAILABLE", record["error"]["code"])
+        self.assertEqual([], self.records(qm.JOURNAL_CYCLE_RECORD)[0]["probesInvoked"])
+
+    # --- R4: per-cycle heartbeat ---------------------------------------------
+
+    def test_every_completed_cycle_writes_exactly_one_heartbeat(self):
+        state = None
+        for step in range(3):
+            state = self.observed(succeeding_probe(1.0), self.now + dt.timedelta(seconds=63 * step), previous=state)
+        heartbeats = self.records(qm.JOURNAL_CYCLE_RECORD)
+        self.assertEqual(3, len(heartbeats))
+        self.assertEqual({"anthropic": "FRESH", "openai": "FRESH"}, heartbeats[0]["providers"])
+        self.assertEqual(["anthropic", "openai"], heartbeats[0]["probesInvoked"])
+        self.assertTrue(all(item["pid"] == os.getpid() for item in heartbeats))
+
+    def test_a_scheduling_gap_is_distinguishable_from_a_probe_failure(self):
+        state = self.observed(succeeding_probe(1.0))
+        # A cycle that completed but failed still leaves a heartbeat behind...
+        state = self.observed(failing_probe, self.now + dt.timedelta(seconds=63), previous=state)
+        # ...whereas a cycle that never ran leaves nothing, so the stall is the gap.
+        self.observed(succeeding_probe(1.0), self.now + dt.timedelta(seconds=3600), previous=state)
+        heartbeats = self.records(qm.JOURNAL_CYCLE_RECORD)
+        stamps = [qm.parse_time(item["completedAt"]) for item in heartbeats]
+        self.assertEqual(63.0, (stamps[1] - stamps[0]).total_seconds())
+        self.assertEqual(3537.0, (stamps[2] - stamps[1]).total_seconds(), "the unscheduled interval is the absence of heartbeats")
+        failed = heartbeats[1]
+        self.assertEqual({"anthropic": "UNAVAILABLE", "openai": "UNAVAILABLE"}, failed["providers"])
+        self.assertEqual(["anthropic", "openai"], failed["probesInvoked"], "a failed probe was still invoked")
+
+    # --- bounded growth -------------------------------------------------------
+
+    def test_the_journal_rotates_once_above_the_cap_and_is_left_alone_below_it(self):
+        self.journal_path.write_text("x" * 32, encoding="utf-8")
+        qm.rotate_journal(self.journal_path, max_bytes=1024)
+        self.assertTrue(self.journal_path.is_file())
+        self.assertFalse(self.rotated_path.is_file())
+        self.journal_path.write_text("y" * 2048, encoding="utf-8")
+        qm.rotate_journal(self.journal_path, max_bytes=1024)
+        self.assertFalse(self.journal_path.is_file())
+        self.assertEqual("y" * 2048, self.rotated_path.read_text(encoding="utf-8"))
+
+    def test_a_sustained_failure_loop_stays_within_the_rotation_bound(self):
+        cap = 4096
+        journal = qm.ProbeJournal(self.journal_path, max_bytes=cap)
+        state = None
+        for step in range(200):
+            state = self.observed(failing_probe, self.now + dt.timedelta(seconds=63 * step), previous=state, journal=journal)
+        self.assertTrue(self.rotated_path.is_file(), "200 failing cycles must have exercised rotation")
+        retained = self.journal_path.stat().st_size + self.rotated_path.stat().st_size
+        self.assertLess(retained, 3 * cap, "growth must stay bounded by one live file plus one generation")
+        self.assertEqual(0, journal.write_errors)
+
+    # --- the redaction boundary is unchanged (AXI-52 / AXI-61) ---------------
+
+    def test_the_journal_carries_no_credential_from_any_diagnostic_field(self):
+        leaking = " ".join(SECRETS.values())
+        diagnosed = qm.QuotaError(
+            "CLAUDE_RESPONSE_MISSING", "No successful get_usage control response", "MALFORMED",
+            diagnostic={
+                "stderr": leaking, "failureClassification": leaking,
+                "controlResponseSubtypes": [leaking], "jsonLines": 3, "successResponseKind": "null",
+            },
+        )
+        self.observed(anthropic_only_failure(diagnosed))
+        text = self.journal_path.read_text(encoding="utf-8")
+        for name, secret in SECRETS.items():
+            self.assertNotIn(secret, text, name)
+        diagnostic = self.probes()[0]["error"]["diagnostic"]
+        self.assertEqual(3, diagnostic["jsonLines"], "non-sensitive structure is still preserved")
+        self.assertIn("<redacted", diagnostic["stderr"])
+
+    def test_a_boundary_redacted_diagnostic_is_not_re_expanded_by_the_journal(self):
+        """AXI-61: a capture-boundary fragment stays replaced, never reconstructed."""
+        marked = "warning: " + qm.STDERR_CAPTURE_BOUNDARY_REPLACEMENT
+        diagnosed = qm.QuotaError(
+            "CLAUDE_LIMITS_UNAVAILABLE", "Claude rate limits were not available",
+            diagnostic={"rateLimitsAvailable": True, "rateLimitsKind": "null", "stderr": marked},
+        )
+        self.observed(anthropic_only_failure(diagnosed))
+        self.assertEqual(marked, self.probes()[0]["error"]["diagnostic"]["stderr"])
+
+    def test_an_oversized_diagnostic_is_bounded_in_the_journal(self):
+        verbose = "warning: probe retry window elapsed. " * 200  # no credential-shaped run
+        diagnosed = qm.QuotaError(
+            "CLAUDE_LIMITS_UNAVAILABLE", "Claude rate limits were not available",
+            diagnostic={"stderr": verbose},
+        )
+        self.observed(anthropic_only_failure(diagnosed))
+        stderr = self.probes()[0]["error"]["diagnostic"]["stderr"]
+        self.assertEqual(qm.STDERR_DIAGNOSTIC_LIMIT + len("...[truncated]"), len(stderr))
+
+    def test_a_non_scalar_diagnostic_value_is_reduced_to_its_shape(self):
+        """Real diagnostics nest two levels; anything deeper is named, not retained."""
+        diagnosed = qm.QuotaError(
+            "CLAUDE_WINDOWS_MALFORMED", "Claude returned no usable quota windows", "MALFORMED",
+            diagnostic={"planWindows": {"five_hour": {"nested": {"deeper": object()}}}},
+        )
+        self.observed(anthropic_only_failure(diagnosed))
+        diagnostic = self.probes()[0]["error"]["diagnostic"]
+        self.assertEqual({"nested": "object"}, diagnostic["planWindows"]["five_hour"])
+
+    def test_the_journal_carries_no_capacity_input(self):
+        self.observed(succeeding_probe(73.5))
+        text = self.journal_path.read_text(encoding="utf-8")
+        for token in ("signal", "windows", "73.5", "five_hour", "ordinaryUsageAllowed"):
+            self.assertNotIn(token, text, "the journal must classify failures, never carry capacity")
+
+    # --- approved behaviour is unchanged -------------------------------------
+
+    def test_journalling_changes_neither_the_observation_nor_any_decision(self):
+        without = self.observed(succeeding_probe(1.0), journal=None)
+        self.assertEqual([], self.records(), "an unjournalled observation writes nothing")
+        with_journal = self.observed(succeeding_probe(1.0))
+        self.assertEqual(without, with_journal)
+        for provider in ("anthropic", "openai", "ollama"):
+            for work in ("new", "active"):
+                self.assertEqual(
+                    qm.guard_decision(self.policy, without, provider, work, self.now),
+                    qm.guard_decision(self.policy, with_journal, provider, work, self.now),
+                )
+
+    def test_grace_age_measures_the_retained_reading_and_agrees_with_the_gate(self):
+        """AXI-52 semantics: consecutive failures must not restart the stale clock."""
+        window = self.policy["monitoring"]["staleAfterSeconds"]
+        state = self.observed(succeeding_probe(1.0))
+        observed = []
+        for step in (1, 2, 3):
+            moment = self.now + dt.timedelta(seconds=63 * step)
+            state = self.observed(failing_probe, moment, previous=state)
+            observed.append((
+                self.probes()[-1]["graceAgeSeconds"],
+                qm.guard_decision(self.policy, state, "anthropic", "active", moment)["decision"],
+            ))
+        self.assertEqual([(63.0, "ALLOW"), (126.0, "CHECKPOINT_STOP"), (189.0, "CHECKPOINT_STOP")], observed)
+        self.assertLess(observed[0][0], window)
+        self.assertGreater(observed[1][0], window)
+
+    def test_a_journal_write_failure_never_breaks_the_cycle(self):
+        def refuse(*_args, **_kwargs):
+            raise OSError("synthetic journal failure")
+
+        with patch.object(qm, "append_jsonl", refuse):
+            state = self.observed(succeeding_probe(1.0))
+        self.assertEqual("GREEN", state["providers"]["anthropic"]["state"])
+        self.assertEqual("FRESH", state["providers"]["anthropic"]["health"])
+        self.assertEqual(3, self.journal.write_errors, "two probe records plus one heartbeat")
+
+    def test_the_durable_control_event_gains_no_new_field(self):
+        """R2 is held for Board review, so the governance artefact must be untouched."""
+        schema = json.loads((MODULE_PATH.parent / "control-event.schema.json").read_text(encoding="utf-8"))
+        stale = fresh_state(self.policy, "GREEN", self.now - dt.timedelta(seconds=121))
+        consumers = {"anthropic": [{"runId": "claude-1", "taskId": "task-c1", "agentId": "agent-c1", "agentName": "Claude One", "status": "running"}], "openai": []}
+        events = Path(self.directory.name) / "control-events.jsonl"
+        qm.enforce_active_controls(
+            self.policy, stale, events, now=self.now, consumers=consumers,
+            pause_agent=lambda agent_id: {"agentId": agent_id, "agentStatus": "paused"},
+        )
+        records = [json.loads(line) for line in events.read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(records)
+        self.assertTrue(all(record["stateReason"] == "STATE_STALE" for record in records))
+        for record in records:
+            self.assertLessEqual(set(record), set(schema["properties"]), "no undeclared durable field")
+            self.assertNotIn("telemetryFailure", record)
+
+    def test_the_monitor_loop_journals_every_cycle_beside_the_state_it_overwrites(self):
+        """End to end through `command_main`: three cycles, one surviving state file."""
+        policy_path = Path(self.directory.name) / "policy.json"
+        state_path = Path(self.directory.name) / "state.json"
+        policy_path.write_text(json.dumps(self.policy), encoding="utf-8")
+        journal = state_path.with_name(qm.JOURNAL_FILENAME)
+        cycles = []
+
+        class Stop(Exception):
+            """Ends the supervised loop the way the host's own stop would."""
+
+        def sleep(_seconds):
+            cycles.append(json.loads(state_path.read_text(encoding="utf-8"))["generatedAt"])
+            if len(cycles) == 3:
+                raise Stop()
+
+        with patch.object(qm, "fetch_active_consumers", return_value={"anthropic": [], "openai": []}), \
+             patch.object(qm, "run_probe", succeeding_probe(1.0)), \
+             patch.object(qm.time, "sleep", sleep), patch("sys.stdout", io.StringIO()):
+            with self.assertRaises(Stop):
+                qm.command_main(["monitor", "--policy", str(policy_path), "--state", str(state_path)])
+        records = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+        heartbeats = [item for item in records if item["record"] == qm.JOURNAL_CYCLE_RECORD]
+        self.assertEqual(3, len(heartbeats))
+        self.assertEqual(6, len([item for item in records if item["record"] == qm.JOURNAL_PROBE_RECORD]))
+        self.assertEqual(cycles, [item["generatedAt"] for item in heartbeats])
+        self.assertEqual(3, len(set(cycles)), "each cycle replaced the state file")
+        self.assertEqual(cycles[-1], json.loads(state_path.read_text(encoding="utf-8"))["generatedAt"])
+
+    def test_only_the_supervised_monitor_writes_a_journal(self):
+        disabled = complete_policy()
+        disabled["monitoring"]["enabled"] = False
+        policy_path = Path(self.directory.name) / "policy.json"
+        state_path = Path(self.directory.name) / "state.json"
+        policy_path.write_text(json.dumps(disabled), encoding="utf-8")
+        journal = state_path.with_name(qm.JOURNAL_FILENAME)
+        argv = ["--policy", str(policy_path), "--state", str(state_path)]
+        with patch("sys.stdout", io.StringIO()):
+            self.assertEqual(78, qm.command_main(["monitor", *argv]))
+        self.assertEqual(qm.JOURNAL_CYCLE_RECORD, json.loads(journal.read_text(encoding="utf-8").splitlines()[-1])["record"])
+        journal.unlink()
+        with patch("sys.stdout", io.StringIO()):
+            qm.command_main(["observe", *argv])
+        self.assertFalse(journal.is_file(), "a one-shot observe leaves no journal behind")
 
 
 if __name__ == "__main__":

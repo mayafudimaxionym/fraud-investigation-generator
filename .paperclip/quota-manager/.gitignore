@@ -7,3 +7,5 @@ companies/*/checkpoint-evidence/
 companies/*/checkpoints/
 companies/*/monitor.log
 companies/*/monitor.log.1
+companies/*/probe-outcomes.jsonl
+companies/*/probe-outcomes.jsonl.1

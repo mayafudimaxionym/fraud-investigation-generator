@@ -10,6 +10,7 @@ This directory is company-level coordination infrastructure, not fraud-product c
 - Preventive-control event schema: `control-event.schema.json`
 - Shared state (created by the monitor only after it is deliberately run): `companies/e6b7cf59-43ee-4b47-82b0-d1a3ed33b26e/state.json`
 - Preventive-control ledger (created only by enabled enforcement): `companies/e6b7cf59-43ee-4b47-82b0-d1a3ed33b26e/control-events.jsonl`
+- Probe-outcome journal (written by the supervised `monitor` loop only): `companies/e6b7cf59-43ee-4b47-82b0-d1a3ed33b26e/probe-outcomes.jsonl`
 
 Agents and tasks do not carry threshold, reserve, polling, or concurrency values. The state is atomically replaced JSON, so guards perform only one cheap local read.
 
@@ -116,6 +117,34 @@ Maya approved a Windows Scheduled Task as the monitor host. The registered defin
 - Reversal: delete the scheduled task. Nothing else on the host is modified.
 
 Supervision is verified by stopping the monitor process and observing the scheduler start a new one within the 180-second stale threshold while state stays FRESH.
+
+## Probe-outcome journal
+
+`state.json` is atomically replaced every cycle, so a failed probe's diagnostics
+survive roughly one poll interval. That is enough for the guard, which only ever
+reads the current state, but not enough to explain an incident reviewed hours
+later. The supervised `monitor` loop therefore appends `probe-outcomes.jsonl`
+beside `monitor.log`, rotated once at the same 1 MiB bound with one previous
+generation kept.
+
+- One `probe` record per applicable provider per cycle: `health`, `state`,
+  `error.code`, the same bounded and redacted `error.diagnostic` the state file
+  carries, `probeStartedAt`, `probeDurationMs`, `consecutiveFailureCount`, and
+  `graceAgeSeconds` — the age of the retained trustworthy reading that
+  `monitoring.staleAfterSeconds` is compared against.
+- One `cycle` heartbeat record per completed cycle, carrying the monitor `pid`.
+  A monitor that stops being scheduled leaves *absent* heartbeats, which a
+  completed-but-failed probe never does, so a scheduling stall is distinguishable
+  from a probe failure after the fact.
+
+The journal is diagnostic only. Nothing in it is read back as a capacity input,
+by any decision path, or by the launch guard; a failed append is counted and
+otherwise ignored so journalling can never affect a cycle. It carries no capacity
+value and no raw provider response, and reuses the existing `redact()`/`bounded()`
+boundary, so it opens no new secret surface. `consecutiveFailureCount` is
+process-local and resets on a monitor restart — the heartbeat `pid` is what shows
+that a restart rather than a recovery ended a failure run. A one-shot `observe`
+writes no journal.
 
 ## Guarded launch seams
 

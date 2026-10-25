@@ -83,6 +83,17 @@ REDACTIONS = (
 STDERR_CAPTURE_BOUNDARY_REPLACEMENT = "<redacted-boundary-fragment>"
 STDERR_CAPTURE_BOUNDARY_DELIMITERS = frozenset(",;\"'}]")
 
+# Probe-outcome journal. Diagnostics only: nothing written here is read back as a
+# capacity input, by any decision path, or by the launch guard. It exists because
+# `state.json` is replaced every cycle, so a failed probe's diagnostics survive
+# roughly one poll interval and cannot explain an incident reviewed hours later.
+# The journal changes no threshold, no interval, and no fail-closed transition.
+JOURNAL_FILENAME = "probe-outcomes.jsonl"
+JOURNAL_MAX_BYTES = 1_048_576  # same bound and single-generation policy as monitor.log
+JOURNAL_PROBE_RECORD = "probe"
+JOURNAL_CYCLE_RECORD = "cycle"
+JOURNAL_DIAGNOSTIC_DEPTH = 3  # nesting walked before a value is reduced to its shape
+
 
 def probe_process_options() -> dict[str, int]:
     """Return platform-specific options that keep telemetry probes windowless."""
@@ -745,13 +756,177 @@ def incomplete_state(policy: dict[str, Any], missing: list[str], now: dt.datetim
     return {"schemaVersion": 1, "companyId": policy.get("companyId"), "configurationVersion": policy.get("configurationVersion"), "generatedAt": iso(now), "providers": providers}
 
 
-def observe(policy: dict[str, Any], now: dt.datetime | None = None, previous: dict[str, Any] | None = None) -> dict[str, Any]:
+def rotate_journal(path: Path, max_bytes: int = JOURNAL_MAX_BYTES) -> None:
+    """Keep one previous journal so a sustained failure loop cannot fill the disk.
+
+    Mirrors ``monitor-service.rotate_log``: the same 1 MiB bound and the same
+    single-generation policy, applied to the file the monitor appends to.
+    """
+    try:
+        if path.is_file() and path.stat().st_size > max_bytes:
+            previous = path.with_name(path.name + ".1")
+            previous.unlink(missing_ok=True)
+            path.replace(previous)
+    except OSError:
+        # Journalling must never prevent the monitor from completing a cycle.
+        pass
+
+
+def journal_diagnostic(value: Any, depth: int = 0) -> Any:
+    """Copy a failed-probe diagnostic into the journal through the same boundary.
+
+    Every value here was already redacted and bounded when the probe raised, so
+    this re-applies that boundary rather than widening it: free text goes through
+    ``redact()``/``bounded()`` again, scalars through ``safe_scalar()``, and
+    anything deeper than ``JOURNAL_DIAGNOSTIC_DEPTH`` is reduced to its shape.
+    Re-redaction is safe because no replacement marker matches a redaction
+    pattern, so the journal copy cannot differ from the state copy by more than
+    a further truncation.
+    """
+    if isinstance(value, str):
+        return bounded(redact(value), STDERR_DIAGNOSTIC_LIMIT)
+    if depth < JOURNAL_DIAGNOSTIC_DEPTH:
+        if isinstance(value, dict):
+            return {str(key): journal_diagnostic(item, depth + 1) for key, item in value.items()}
+        if isinstance(value, list):
+            return [journal_diagnostic(item, depth + 1) for item in value[:CONTROL_RESPONSE_SUBTYPES_LIMIT]]
+    return safe_scalar(value)
+
+
+def grace_age_seconds(record: Any, now: dt.datetime) -> float | None:
+    """Age of the reading this provider is still entitled to trust, in seconds.
+
+    This is the quantity the central ``monitoring.staleAfterSeconds`` threshold is
+    compared against, recorded so an incident shows how close each cycle came to
+    the fail-closed transition. It is reported, never enforced, here.
+    """
+    telemetry = record.get("telemetry") if isinstance(record, dict) else None
+    at = telemetry.get("lastTrustworthyAt") if isinstance(telemetry, dict) else None
+    if not isinstance(at, str) or not at:
+        return None
+    try:
+        return round((now - parse_time(at)).total_seconds(), 3)
+    except ValueError:
+        return None
+
+
+class ProbeJournal:
+    """Append-only, rotation-bounded journal of per-cycle probe outcomes.
+
+    Each completed cycle writes one ``probe`` record per applicable provider and
+    one ``cycle`` heartbeat record. A monitor that stops being scheduled therefore
+    shows up as *absent* ``cycle`` records, which a completed-but-failed probe
+    never produces; that is what makes a scheduling stall distinguishable from a
+    probe failure after the fact.
+
+    Writing is best-effort by design. The journal is diagnostic, so a failed
+    append increments ``write_errors`` and is otherwise ignored: it must never
+    change an observation, a decision, or the monitor's liveness.
+
+    ``consecutiveFailureCount`` is process-local. A monitor restart resets it to
+    zero mid-run; the ``pid`` on each heartbeat is what lets a reader see that a
+    restart, rather than a recovery, ended a failure run.
+    """
+
+    def __init__(self, path: Path | str, max_bytes: int = JOURNAL_MAX_BYTES) -> None:
+        self.path = Path(path)
+        self.max_bytes = max_bytes
+        self.consecutive_failures: dict[str, int] = {}
+        self.write_errors = 0
+
+    def append(self, record: dict[str, Any]) -> None:
+        try:
+            rotate_journal(self.path, self.max_bytes)
+            append_jsonl(self.path, record)
+        except OSError:
+            self.write_errors += 1
+
+    def probe_record(self, provider: str, record: dict[str, Any], timing: dict[str, Any], now: dt.datetime, generated_at: Any) -> dict[str, Any]:
+        health = record.get("health")
+        # Counts consecutive non-FRESH outcomes. A configuration-incomplete cycle
+        # is also non-FRESH but ran no probe, which `probeInvoked` keeps visible.
+        count = self.consecutive_failures.get(provider, 0) + 1 if health != "FRESH" else 0
+        self.consecutive_failures[provider] = count
+        error = record.get("error") if isinstance(record.get("error"), dict) else None
+        consumers = record.get("activeConsumers")
+        return {
+            "record": JOURNAL_PROBE_RECORD,
+            "schemaVersion": 1,
+            "generatedAt": generated_at,
+            "observedAt": record.get("observedAt"),
+            "provider": provider,
+            "health": health,
+            "state": record.get("state"),
+            "error": None if error is None else {
+                "code": error.get("code"),
+                "diagnostic": journal_diagnostic(error.get("diagnostic")) if error.get("diagnostic") is not None else None,
+            },
+            "probeInvoked": bool(timing),
+            "probeStartedAt": timing.get("startedAt"),
+            "probeDurationMs": timing.get("durationMs"),
+            "consecutiveFailureCount": count,
+            "graceAgeSeconds": grace_age_seconds(record, now),
+            "activeConsumerCount": len(consumers) if isinstance(consumers, list) else None,
+        }
+
+    def record_cycle(self, now: dt.datetime, state: dict[str, Any], timings: dict[str, dict[str, Any]]) -> None:
+        generated_at = state.get("generatedAt")
+        providers = state.get("providers")
+        providers = providers if isinstance(providers, dict) else {}
+        outcomes: dict[str, Any] = {}
+        for provider in CLOUD:
+            record = providers.get(provider)
+            if not isinstance(record, dict) or not record.get("applicable"):
+                self.consecutive_failures.pop(provider, None)
+                continue
+            outcome = self.probe_record(provider, record, timings.get(provider) or {}, now, generated_at)
+            self.append(outcome)
+            outcomes[provider] = outcome["health"]
+        self.append({
+            "record": JOURNAL_CYCLE_RECORD,
+            "schemaVersion": 1,
+            "generatedAt": generated_at,
+            "completedAt": iso(now),
+            "pid": os.getpid(),
+            "providers": outcomes,
+            "probesInvoked": sorted(timings),
+        })
+
+
+def journalled(journal: Any, now: dt.datetime, state: dict[str, Any], timings: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Record the cycle that produced ``state``, then return it unchanged."""
+    if journal is not None:
+        journal.record_cycle(now, state, timings)
+    return state
+
+
+def timed_probe(provider: str, config: dict[str, Any], timings: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Run one probe, recording its start and duration on success and failure alike.
+
+    The timing is kept out of ``state.json`` deliberately: it is diagnostic, and
+    the published state schema is a durable record whose shape is approved
+    separately. A timeout is therefore distinguishable from an immediate failure
+    in the journal without changing the state contract.
+    """
+    started = utc_now()
+    counter = time.perf_counter()
+    try:
+        return run_probe(provider, config)
+    finally:
+        timings[provider] = {
+            "startedAt": iso(started),
+            "durationMs": round((time.perf_counter() - counter) * 1000.0, 3),
+        }
+
+
+def observe(policy: dict[str, Any], now: dt.datetime | None = None, previous: dict[str, Any] | None = None, journal: Any = None) -> dict[str, Any]:
     now = now or utc_now()
+    timings: dict[str, dict[str, Any]] = {}
     missing = missing_policy_values(policy)
     if missing:
-        return incomplete_state(policy, missing, now)
+        return journalled(journal, now, incomplete_state(policy, missing, now), timings)
     if not policy["monitoring"]["enabled"]:
-        return incomplete_state(policy, ["monitoring.enabled=false"], now)
+        return journalled(journal, now, incomplete_state(policy, ["monitoring.enabled=false"], now), timings)
     needs_consumers = any(policy["providers"][p]["applicable"] and policy["providers"][p]["concurrency"]["enabled"] for p in CLOUD)
     try:
         consumers = fetch_active_consumers(policy) if needs_consumers else {p: [] for p in CLOUD}
@@ -768,7 +943,7 @@ def observe(policy: dict[str, Any], now: dt.datetime | None = None, previous: di
             error = consumer_error
         else:
             try:
-                signal = run_probe(provider, config)
+                signal = timed_probe(provider, config, timings)
                 state, evaluated = classify(signal, config, len(consumers[provider]))
                 fresh = {"at": iso(now), "state": state, "causingWindows": causing_window_ids({"windows": evaluated})}
                 providers[provider] = {
@@ -786,7 +961,8 @@ def observe(policy: dict[str, Any], now: dt.datetime | None = None, previous: di
             "telemetry": telemetry_record(now, error.health, retained_reading(policy, previous, provider)),
         }
     providers["ollama"] = {"applicable": False, "health": "EXCLUDED", "state": "EXCLUDED"}
-    return {"schemaVersion": 1, "companyId": policy["companyId"], "configurationVersion": policy["configurationVersion"], "generatedAt": iso(now), "providers": providers}
+    observation = {"schemaVersion": 1, "companyId": policy["companyId"], "configurationVersion": policy["configurationVersion"], "generatedAt": iso(now), "providers": providers}
+    return journalled(journal, now, observation, timings)
 
 
 def guard_decision(policy: dict[str, Any], state: dict[str, Any], provider: str, work: str, now: dt.datetime | None = None) -> dict[str, str]:
@@ -918,12 +1094,17 @@ def pause_paperclip_agent(policy: dict[str, Any], agent_id: str) -> dict[str, An
     return {"agentId": agent_id, "agentStatus": "paused"}
 
 
-def append_control_event(path: Path, event: dict[str, Any]) -> None:
+def append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    """Append one durable JSON line, flushed and fsynced before returning."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(event, sort_keys=True) + "\n")
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
+
+
+def append_control_event(path: Path, event: dict[str, Any]) -> None:
+    append_jsonl(path, event)
 
 
 def _fetch_paperclip_json(policy: dict[str, Any], path: str) -> dict[str, Any]:
@@ -1231,13 +1412,17 @@ def command_main(argv: list[str] | None = None) -> int:
             previous = None
         if not isinstance(previous, dict):
             previous = None
+        # The journal belongs to the supervised monitor loop: it is how a probe
+        # outcome outlives the state file that replaces it every cycle. A one-shot
+        # `observe` prints its own result and leaves no journal behind.
+        journal = ProbeJournal(args.state.with_name(JOURNAL_FILENAME)) if args.command == "monitor" else None
         if args.command == "monitor" and (missing_policy_values(policy) or not policy.get("monitoring", {}).get("enabled")):
-            state = observe(policy, previous=previous)
+            state = observe(policy, previous=previous, journal=journal)
             write_state(args.state, state)
             print(json.dumps(state, indent=2))
             return 78
         while True:
-            state = observe(policy, previous=previous)
+            state = observe(policy, previous=previous, journal=journal)
             write_state(args.state, state)
             previous = state
             if args.command == "observe":
